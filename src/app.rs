@@ -1,15 +1,18 @@
 use crate::{
     cli::RunOptions,
     config::{Config, DEFAULT_BAUD, DEFAULT_COLS, DEFAULT_DEVICE, DEFAULT_ROWS},
-    lcd::{Lcd, BAR_EMPTY, BAR_FULL},
+    config::Pcf8574Addr,
+    lcd::{Lcd, BAR_LEVELS, HEARTBEAT_CHAR},
     payload::Defaults as PayloadDefaults,
     payload::RenderFrame,
     serial::SerialPort,
     Error, Result,
 };
-use std::{fs, time::{Duration, Instant}};
+use std::{fs, thread, time::{Duration, Instant}};
 
 const SCROLL_GAP: &str = "    |    ";
+const HEARTBEAT_GRACE_MS: u64 = 5_000;
+const HEARTBEAT_BLINK_MS: u64 = 1_000;
 /// Config for the daemon.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppConfig {
@@ -21,6 +24,9 @@ pub struct AppConfig {
     pub page_timeout_ms: u64,
     pub button_gpio_pin: Option<u8>,
     pub payload_file: Option<String>,
+    pub backoff_initial_ms: u64,
+    pub backoff_max_ms: u64,
+    pub pcf8574_addr: Pcf8574Addr,
 }
 
 impl Default for AppConfig {
@@ -34,6 +40,9 @@ impl Default for AppConfig {
             page_timeout_ms: crate::payload::DEFAULT_PAGE_TIMEOUT_MS,
             button_gpio_pin: None,
             payload_file: None,
+            backoff_initial_ms: crate::config::DEFAULT_BACKOFF_INITIAL_MS,
+            backoff_max_ms: crate::config::DEFAULT_BACKOFF_MAX_MS,
+            pcf8574_addr: crate::config::DEFAULT_PCF8574_ADDR,
         }
     }
 }
@@ -55,8 +64,21 @@ impl App {
 
     /// Entry point for the daemon. Wire up serial + LCD here.
     pub fn run(&self) -> Result<()> {
-        let mut lcd = Lcd::new(self.config.cols, self.config.rows)?;
+        let mut lcd = Lcd::new(
+            self.config.cols,
+            self.config.rows,
+            self.config.pcf8574_addr.clone(),
+        )?;
         lcd.render_boot_message()?;
+
+        let mut backoff =
+            Duration::from_millis(self.config.backoff_initial_ms.max(1));
+        let max_backoff = Duration::from_millis(
+            self.config
+                .backoff_max_ms
+                .max(self.config.backoff_initial_ms.max(1)),
+        );
+        let mut next_retry = Instant::now();
 
         if let Some(path) = &self.config.payload_file {
             let defaults = PayloadDefaults {
@@ -69,8 +91,25 @@ impl App {
             return render_frame(&mut lcd, &frame);
         }
 
-        let mut port = SerialPort::connect(&self.config.device, self.config.baud)?;
-        port.send_line("INIT")?;
+        let mut port: Option<SerialPort> =
+            match SerialPort::connect(&self.config.device, self.config.baud) {
+                Ok(mut p) => {
+                    if let Err(err) = p.send_line("INIT") {
+                        eprintln!("serial init failed: {err}; will retry");
+                        None
+                    } else {
+                        Some(p)
+                    }
+                }
+                Err(err) => {
+                    eprintln!("serial connect failed: {err}; will retry");
+                    None
+                }
+            };
+        if port.is_none() {
+            next_retry = Instant::now() + backoff;
+            render_reconnecting(&mut lcd, self.config.cols)?;
+        }
 
         let mut state = crate::state::RenderState::new(Some(PayloadDefaults {
             scroll_speed_ms: self.config.scroll_speed_ms,
@@ -87,9 +126,23 @@ impl App {
         let mut backlight_state = true;
         let blink_interval = Duration::from_millis(500);
         let mut next_blink = Instant::now();
+        let mut reconnect_displayed = port.is_none();
+        let mut last_frame_at = Instant::now();
+        let heartbeat_grace = Duration::from_millis(HEARTBEAT_GRACE_MS);
+        let mut heartbeat_visible = false;
+        let mut next_heartbeat = Instant::now() + Duration::from_millis(HEARTBEAT_BLINK_MS);
 
         loop {
             let now = Instant::now();
+            let heartbeat_active = now.duration_since(last_frame_at) >= heartbeat_grace;
+            if heartbeat_active && now >= next_heartbeat {
+                heartbeat_visible = !heartbeat_visible;
+                next_heartbeat = now + Duration::from_millis(HEARTBEAT_BLINK_MS);
+            } else if !heartbeat_active {
+                heartbeat_visible = false;
+                next_heartbeat = now + Duration::from_millis(HEARTBEAT_BLINK_MS);
+            }
+            let heartbeat_on = heartbeat_active && heartbeat_visible;
 
             if let Some(btn) = button.as_mut() {
                 if btn.is_pressed() {
@@ -107,63 +160,118 @@ impl App {
                                 &mut last_render,
                                 min_render_interval,
                                 scroll_offsets,
+                                heartbeat_on,
                             )?;
                         }
                     }
                 }
             }
 
-            buffer.clear();
-            let read = port.read_line(&mut buffer)?;
-            if read > 0 {
-                let line = buffer.trim_end_matches(&['\r', '\n'][..]).trim();
-                if !line.is_empty() {
-                    match state.ingest(line) {
-                        Ok(Some(frame)) => {
-                            current_frame = Some(frame.clone());
-                            scroll_offsets = (0, 0);
-                            next_scroll =
-                                now + Duration::from_millis(self.config.scroll_speed_ms);
-                            lcd.clear()?;
-                            backlight_state = frame.backlight_on;
-                            lcd.set_backlight(backlight_state)?;
-                            lcd.set_blink(frame.blink)?;
-                            next_blink = now + blink_interval;
-                            if let Some(frame) = current_frame.as_ref() {
-                                next_page =
-                                    now + Duration::from_millis(frame.page_timeout_ms);
-                                render_if_allowed(
-                                    &mut lcd,
-                                    frame,
-                                    &mut last_render,
-                                    min_render_interval,
-                                    scroll_offsets,
-                                )?;
+            if port.is_none() && !reconnect_displayed {
+                render_reconnecting(&mut lcd, self.config.cols)?;
+                reconnect_displayed = true;
+            }
+
+            if port.is_none() && now >= next_retry {
+                    match SerialPort::connect(&self.config.device, self.config.baud) {
+                        Ok(mut p) => {
+                            if let Err(err) = p.send_line("INIT") {
+                                eprintln!("serial init failed: {err}; will retry");
+                                next_retry = now + backoff;
+                                backoff = (backoff * 2).min(max_backoff);
+                            } else {
+                                port = Some(p);
+                                backoff = Duration::from_millis(
+                                    self.config.backoff_initial_ms.max(1)
+                                );
+                                reconnect_displayed = false;
+                                heartbeat_visible = false;
                             }
                         }
-                        Ok(None) => { /* duplicate */ }
-                        Err(err) => eprintln!("frame error: {err}"),
+                        Err(err) => {
+                            eprintln!("serial reconnect failed: {err}; will retry");
+                            next_retry = now + backoff;
+                        backoff = (backoff * 2).min(max_backoff);
                     }
                 }
             }
 
-                if state.len() > 1 && now >= next_page {
-                    if let Some(frame) = state.next_page() {
-                        current_frame = Some(frame);
-                        scroll_offsets = (0, 0);
-                        if let Some(frame) = current_frame.as_ref() {
-                            next_page = now + Duration::from_millis(frame.page_timeout_ms);
-                            lcd.clear()?;
-                            backlight_state = frame.backlight_on;
-                            lcd.set_backlight(backlight_state)?;
-                            lcd.set_blink(frame.blink)?;
-                            next_blink = now + blink_interval;
-                            render_if_allowed(
+            if let Some(port_ref) = port.as_mut() {
+                buffer.clear();
+                match port_ref.read_line(&mut buffer) {
+                    Ok(read) => {
+                        if read > 0 {
+                            let line = buffer.trim_end_matches(&['\r', '\n'][..]).trim();
+                            if !line.is_empty() {
+                                match state.ingest(line) {
+                                    Ok(Some(frame)) => {
+                                        current_frame = Some(frame.clone());
+                                        scroll_offsets = (0, 0);
+                                        next_scroll =
+                                            now + Duration::from_millis(self.config.scroll_speed_ms);
+                                        lcd.clear()?;
+                                        backlight_state = frame.backlight_on;
+                                        lcd.set_backlight(backlight_state)?;
+                                        lcd.set_blink(frame.blink)?;
+                                        next_blink = now + blink_interval;
+                                        last_frame_at = now;
+                                        heartbeat_visible = false;
+                                        if let Some(frame) = current_frame.as_ref() {
+                                            next_page =
+                                                now + Duration::from_millis(frame.page_timeout_ms);
+                                            render_if_allowed(
+                                                &mut lcd,
+                                                frame,
+                                                &mut last_render,
+                                                min_render_interval,
+                                                scroll_offsets,
+                                                heartbeat_on,
+                                            )?;
+                                        }
+                                    }
+                                    Ok(None) => { /* duplicate */ }
+                                    Err(err) => {
+                                        eprintln!("frame error: {err}");
+                                        render_parse_error(&mut lcd, self.config.cols, &err)?;
+                                        backlight_state = true;
+                                        next_blink = now + blink_interval;
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(Error::Io(e)) => {
+                        eprintln!("serial read error: {e}; scheduling reconnect");
+                        port = None;
+                        next_retry = now + backoff;
+                        backoff = (backoff * 2).min(max_backoff);
+                        reconnect_displayed = false;
+                    }
+                    Err(err) => return Err(err),
+                }
+            } else {
+                thread::sleep(Duration::from_millis(50));
+            }
+
+            if state.len() > 1 && now >= next_page {
+                if let Some(frame) = state.next_page() {
+                    current_frame = Some(frame);
+                    scroll_offsets = (0, 0);
+                    if let Some(frame) = current_frame.as_ref() {
+                        next_page = now + Duration::from_millis(frame.page_timeout_ms);
+                        lcd.clear()?;
+                        backlight_state = frame.backlight_on;
+                        lcd.set_backlight(backlight_state)?;
+                        lcd.set_blink(frame.blink)?;
+                        next_blink = now + blink_interval;
+                        render_if_allowed(
                             &mut lcd,
                             frame,
                             &mut last_render,
                             min_render_interval,
                             scroll_offsets,
+                            heartbeat_on,
                         )?;
                     }
                 }
@@ -172,10 +280,11 @@ impl App {
             if let Some(frame) = current_frame.as_ref() {
                 let width = lcd.cols() as usize;
                 let needs_scroll = match frame.bar_row {
-                    Some(0) => line_needs_scroll(&frame.line2, width),
-                    Some(1) => line_needs_scroll(&frame.line1, width),
-                    _ => line_needs_scroll(&frame.line1, width)
-                        || line_needs_scroll(&frame.line2, width),
+                    Some(0) => frame.scroll_enabled && line_needs_scroll(&frame.line2, width),
+                    Some(1) => frame.scroll_enabled && line_needs_scroll(&frame.line1, width),
+                    _ => frame.scroll_enabled
+                        && (line_needs_scroll(&frame.line1, width)
+                            || line_needs_scroll(&frame.line2, width)),
                 };
                 if needs_scroll && now >= next_scroll {
                     scroll_offsets = (
@@ -190,6 +299,7 @@ impl App {
                         &mut last_render,
                         min_render_interval,
                         scroll_offsets,
+                        heartbeat_on,
                     )?;
                 }
 
@@ -221,12 +331,19 @@ impl AppConfig {
             page_timeout_ms: config.page_timeout_ms,
             button_gpio_pin: config.button_gpio_pin,
             payload_file: opts.payload_file,
+            backoff_initial_ms: opts
+                .backoff_initial_ms
+                .unwrap_or(config.backoff_initial_ms),
+            backoff_max_ms: opts.backoff_max_ms.unwrap_or(config.backoff_max_ms),
+            pcf8574_addr: opts
+                .pcf8574_addr
+                .unwrap_or_else(|| config.pcf8574_addr.clone()),
         }
     }
 }
 
 fn render_frame(lcd: &mut Lcd, frame: &RenderFrame) -> Result<()> {
-    render_frame_with_scroll(lcd, frame, (0, 0))
+    render_frame_with_scroll(lcd, frame, (0, 0), false)
 }
 
 fn load_payload_from_file(path: &str, defaults: PayloadDefaults) -> Result<RenderFrame> {
@@ -239,11 +356,14 @@ fn render_bar(percent: u8, width: usize) -> String {
         return String::new();
     }
 
-    let interior = width;
-    let filled = (percent as usize * interior) / 100;
+    let max_level = (BAR_LEVELS.len() - 1) as usize;
+    let total_units = width * max_level;
+    let filled_units = (percent as usize * total_units) / 100;
     let mut s = String::with_capacity(width);
-    for i in 0..interior {
-        s.push(if i < filled { BAR_FULL } else { BAR_EMPTY });
+    for col in 0..width {
+        let remaining = filled_units.saturating_sub(col * max_level);
+        let level = remaining.min(max_level);
+        s.push(BAR_LEVELS[level]);
     }
     s
 }
@@ -254,19 +374,21 @@ fn render_if_allowed(
     last_render: &mut Instant,
     min_interval: Duration,
     scroll_offsets: (usize, usize),
+    heartbeat_on: bool,
 ) -> Result<()> {
     let now = Instant::now();
     if now.duration_since(*last_render) < min_interval {
         return Ok(());
     }
     *last_render = now;
-    render_frame_with_scroll(lcd, frame, scroll_offsets)
+    render_frame_with_scroll(lcd, frame, scroll_offsets, heartbeat_on)
 }
 
 fn render_frame_with_scroll(
     lcd: &mut Lcd,
     frame: &RenderFrame,
     offsets: (usize, usize),
+    heartbeat_on: bool,
 ) -> Result<()> {
     lcd.set_blink(frame.blink)?;
 
@@ -276,16 +398,26 @@ fn render_frame_with_scroll(
 
     let width = lcd.cols() as usize;
     let bar_row = frame.bar_row;
-    let line1 = if bar_row == Some(0) && frame.bar_percent.is_some() {
+    let mut line1 = if bar_row == Some(0) && frame.bar_percent.is_some() {
         render_bar(frame.bar_percent.unwrap(), width)
     } else {
-        view_with_scroll(&frame.line1, width, offsets.0)
+        view_line(&frame.line1, width, offsets.0, frame.scroll_enabled)
     };
-    let line2 = if bar_row == Some(1) && frame.bar_percent.is_some() {
+    let mut line2 = if bar_row == Some(1) && frame.bar_percent.is_some() {
         render_bar(frame.bar_percent.unwrap(), width)
     } else {
-        view_with_scroll(&frame.line2, width, offsets.1)
+        view_line(&frame.line2, width, offsets.1, frame.scroll_enabled)
     };
+
+    if heartbeat_on && width > 0 {
+        if bar_row == Some(0) {
+            overlay_heartbeat(&mut line2, width);
+        } else {
+            overlay_heartbeat(&mut line1, width);
+        }
+    }
+
+    overlay_icons(&mut line1, &mut line2, width, &frame.icons, bar_row);
 
     if line1.trim().is_empty() && bar_row != Some(0) {
         lcd.write_line(0, "")?;
@@ -336,6 +468,89 @@ fn view_with_scroll(text: &str, width: usize, offset: usize) -> String {
         .skip(start)
         .take(width)
         .collect()
+}
+
+fn truncate_to_width(text: &str, width: usize) -> String {
+    text.chars().take(width).collect()
+}
+
+fn view_line(text: &str, width: usize, offset: usize, scroll_enabled: bool) -> String {
+    if scroll_enabled {
+        return view_with_scroll(text, width, offset);
+    }
+    truncate_to_width(text, width)
+}
+
+fn overlay_heartbeat(text: &mut String, width: usize) {
+    if width == 0 {
+        return;
+    }
+    let mut chars: Vec<char> = text.chars().collect();
+    if chars.len() < width {
+        chars.resize(width, ' ');
+    } else if chars.len() > width {
+        chars.truncate(width);
+    }
+    if let Some(last) = chars.last_mut() {
+        *last = HEARTBEAT_CHAR;
+    }
+    *text = chars.into_iter().collect();
+}
+
+fn overlay_icons(
+    line1: &mut String,
+    line2: &mut String,
+    width: usize,
+    icons: &[crate::payload::Icon],
+    bar_row: Option<u8>,
+) {
+    if icons.is_empty() || width == 0 {
+        return;
+    }
+    let target = if bar_row == Some(1) { line1 } else { line2 };
+    let icon_char = match icons[0] {
+        crate::payload::Icon::Battery => crate::lcd::BATTERY_CHAR,
+        crate::payload::Icon::Arrow => '>',
+        crate::payload::Icon::Heart => HEARTBEAT_CHAR,
+    };
+    let mut chars: Vec<char> = target.chars().collect();
+    if chars.len() < width {
+        chars.resize(width, ' ');
+    } else if chars.len() > width {
+        chars.truncate(width);
+    }
+    if let Some(last) = chars.last_mut() {
+        *last = icon_char;
+    }
+    *target = chars.into_iter().collect();
+}
+
+fn render_parse_error(lcd: &mut Lcd, cols: u8, err: &Error) -> Result<()> {
+    let width = cols as usize;
+    let mut msg = format!("{err}");
+    if msg.chars().count() > width {
+        msg = msg.chars().take(width).collect();
+    }
+    lcd.set_backlight(true)?;
+    lcd.set_blink(true)?;
+    lcd.write_line(0, "ERR PARSE")?;
+    lcd.write_line(1, &msg)?;
+    Ok(())
+}
+
+fn render_reconnecting(lcd: &mut Lcd, cols: u8) -> Result<()> {
+    let width = cols as usize;
+    let title: String = "RECONNECTING".chars().take(width).collect();
+    let mut detail = "retrying...".to_string();
+    if detail.chars().count() > width {
+        detail = detail.chars().take(width).collect();
+    }
+    lcd.clear()?;
+    lcd.set_backlight(true)?;
+    lcd.set_blink(false)?;
+    lcd.write_line(0, &title)?;
+    lcd.write_line(1, &detail)?;
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]
@@ -417,6 +632,9 @@ mod tests {
             cols: Some(16),
             rows: Some(2),
             payload_file: None,
+            backoff_initial_ms: None,
+            backoff_max_ms: None,
+            pcf8574_addr: None,
         };
         let cfg = AppConfig::from_sources(Config::default(), opts.clone());
         assert_eq!(cfg.device, "/dev/ttyUSB1");
@@ -440,6 +658,9 @@ mod tests {
             scroll_speed_ms: crate::config::DEFAULT_SCROLL_MS,
             page_timeout_ms: crate::config::DEFAULT_PAGE_TIMEOUT_MS,
             button_gpio_pin: None,
+            backoff_initial_ms: crate::config::DEFAULT_BACKOFF_INITIAL_MS,
+            backoff_max_ms: crate::config::DEFAULT_BACKOFF_MAX_MS,
+            pcf8574_addr: crate::config::DEFAULT_PCF8574_ADDR,
         };
         let opts = RunOptions::default();
         let merged = AppConfig::from_sources(cfg_file.clone(), opts);
@@ -447,6 +668,9 @@ mod tests {
         assert_eq!(merged.baud, cfg_file.baud);
         assert_eq!(merged.cols, cfg_file.cols);
         assert_eq!(merged.rows, cfg_file.rows);
+        assert_eq!(merged.backoff_initial_ms, cfg_file.backoff_initial_ms);
+        assert_eq!(merged.backoff_max_ms, cfg_file.backoff_max_ms);
+        assert_eq!(merged.pcf8574_addr, cfg_file.pcf8574_addr);
         let _ = std::fs::remove_dir_all(home);
     }
 

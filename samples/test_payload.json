@@ -9,7 +9,7 @@
   "backlight": true,
   "blink": true,
   "scroll_speed_ms": 180,
-  "ttl_ms": 15000,
+  "duration_ms": 15000,
   "page_timeout_ms": 8000,
   "clear": true,
   "test": true

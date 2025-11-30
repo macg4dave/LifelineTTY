@@ -38,7 +38,7 @@ def build_frames() -> List[Dict[str, Any]]:
             "line1": "ALERT: Temp",
             "line2": "85C HOT!",
             "blink": True,
-            "ttl_ms": 8000,
+            "duration_ms": 8000,
         },
         {
             "line1": "Backlight OFF demo",

@@ -11,8 +11,25 @@ pub const DEFAULT_COLS: u8 = 20;
 pub const DEFAULT_ROWS: u8 = 4;
 pub const DEFAULT_SCROLL_MS: u64 = 250;
 pub const DEFAULT_PAGE_TIMEOUT_MS: u64 = 4000;
+pub const DEFAULT_PCF8574_ADDR: Pcf8574Addr = Pcf8574Addr::Auto;
+pub const DEFAULT_BACKOFF_INITIAL_MS: u64 = 500;
+pub const DEFAULT_BACKOFF_MAX_MS: u64 = 10_000;
 const CONFIG_DIR_NAME: &str = ".serial_lcd";
 const CONFIG_FILE_NAME: &str = "config.toml";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Pcf8574Addr {
+    Auto,
+    Addr(u8),
+}
+
+impl std::str::FromStr for Pcf8574Addr {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        parse_pcf_addr(s)
+    }
+}
 
 /// User-supplied settings loaded from the config file.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,6 +41,9 @@ pub struct Config {
     pub scroll_speed_ms: u64,
     pub page_timeout_ms: u64,
     pub button_gpio_pin: Option<u8>,
+    pub pcf8574_addr: Pcf8574Addr,
+    pub backoff_initial_ms: u64,
+    pub backoff_max_ms: u64,
 }
 
 impl Default for Config {
@@ -36,6 +56,9 @@ impl Default for Config {
             scroll_speed_ms: DEFAULT_SCROLL_MS,
             page_timeout_ms: DEFAULT_PAGE_TIMEOUT_MS,
             button_gpio_pin: None,
+            pcf8574_addr: DEFAULT_PCF8574_ADDR,
+            backoff_initial_ms: DEFAULT_BACKOFF_INITIAL_MS,
+            backoff_max_ms: DEFAULT_BACKOFF_MAX_MS,
         }
     }
 }
@@ -78,7 +101,10 @@ cols = {}\n\
 rows = {}\n\
 scroll_speed_ms = {}\n\
 page_timeout_ms = {}\n\
-button_gpio_pin = {}\n",
+button_gpio_pin = {}\n\
+pcf8574_addr = {}\n\
+backoff_initial_ms = {}\n\
+backoff_max_ms = {}\n",
             self.device,
             self.baud,
             self.cols,
@@ -87,7 +113,10 @@ button_gpio_pin = {}\n",
             self.page_timeout_ms,
             self.button_gpio_pin
                 .map(|p| p.to_string())
-                .unwrap_or_else(|| "null".into())
+                .unwrap_or_else(|| "null".into()),
+            format_pcf_addr(&self.pcf8574_addr),
+            self.backoff_initial_ms,
+            self.backoff_max_ms
         );
         fs::write(path, contents)?;
         Ok(())
@@ -135,6 +164,30 @@ button_gpio_pin = {}\n",
                         Error::InvalidArgs(format!("invalid page_timeout_ms on line {}", idx + 1))
                     })?;
                 }
+                "pcf8574_addr" => {
+                    cfg.pcf8574_addr = parse_pcf_addr(value).map_err(|e| {
+                        Error::InvalidArgs(format!(
+                            "invalid pcf8574_addr on line {}: {e}",
+                            idx + 1
+                        ))
+                    })?;
+                }
+                "backoff_initial_ms" => {
+                    cfg.backoff_initial_ms = value.parse().map_err(|_| {
+                        Error::InvalidArgs(format!(
+                            "invalid backoff_initial_ms on line {}",
+                            idx + 1
+                        ))
+                    })?;
+                }
+                "backoff_max_ms" => {
+                    cfg.backoff_max_ms = value.parse().map_err(|_| {
+                        Error::InvalidArgs(format!(
+                            "invalid backoff_max_ms on line {}",
+                            idx + 1
+                        ))
+                    })?;
+                }
                 "button_gpio_pin" => {
                     if value == "null" {
                         cfg.button_gpio_pin = None;
@@ -166,6 +219,24 @@ fn config_path() -> Result<PathBuf> {
         .map(PathBuf::from)
         .ok_or_else(|| Error::InvalidArgs("HOME not set; cannot locate config directory".into()))?;
     Ok(home.join(CONFIG_DIR_NAME).join(CONFIG_FILE_NAME))
+}
+
+fn parse_pcf_addr(raw: &str) -> std::result::Result<Pcf8574Addr, String> {
+    if raw.eq_ignore_ascii_case("auto") {
+        return Ok(Pcf8574Addr::Auto);
+    }
+    let cleaned = raw.trim_start_matches("0x");
+    let value = u8::from_str_radix(cleaned, 16)
+        .or_else(|_| raw.parse::<u8>())
+        .map_err(|_| "expected 'auto' or a hex/decimal address (e.g., 0x27)".to_string())?;
+    Ok(Pcf8574Addr::Addr(value))
+}
+
+fn format_pcf_addr(addr: &Pcf8574Addr) -> String {
+    match addr {
+        Pcf8574Addr::Auto => "\"auto\"".into(),
+        Pcf8574Addr::Addr(a) => format!("{a:#04x}"),
+    }
 }
 
 #[cfg(test)]
@@ -207,6 +278,9 @@ mod tests {
             scroll_speed_ms = 300
             page_timeout_ms = 4500
             button_gpio_pin = 17
+            pcf8574_addr = "0x23"
+            backoff_initial_ms = 750
+            backoff_max_ms = 9000
         "#;
         fs::write(&path, contents).unwrap();
         let cfg = Config::load_from_path(&path).unwrap();
@@ -217,6 +291,9 @@ mod tests {
         assert_eq!(cfg.scroll_speed_ms, 300);
         assert_eq!(cfg.page_timeout_ms, 4500);
         assert_eq!(cfg.button_gpio_pin, Some(17));
+        assert_eq!(cfg.pcf8574_addr, Pcf8574Addr::Addr(0x23));
+        assert_eq!(cfg.backoff_initial_ms, 750);
+        assert_eq!(cfg.backoff_max_ms, 9000);
         let _ = fs::remove_file(path);
     }
 
@@ -240,6 +317,9 @@ mod tests {
             scroll_speed_ms: 250,
             page_timeout_ms: 4000,
             button_gpio_pin: Some(22),
+            pcf8574_addr: Pcf8574Addr::Auto,
+            backoff_initial_ms: DEFAULT_BACKOFF_INITIAL_MS,
+            backoff_max_ms: DEFAULT_BACKOFF_MAX_MS,
         };
         cfg.save_to_path(&path).unwrap();
         let loaded = Config::load_from_path(&path).unwrap();

@@ -33,6 +33,10 @@ impl RppalBus {
         let addr = detect_address(&mut inner, &[0x27, 0x26, 0x25, 0x24, 0x23, 0x22, 0x21, 0x20], 0x27);
         Ok((Self { inner }, addr))
     }
+
+    pub fn detect_address(&mut self, candidates: &[u8], fallback: u8) -> u8 {
+        detect_address(&mut self.inner, candidates, fallback)
+    }
 }
 
 #[cfg(target_os = "linux")]

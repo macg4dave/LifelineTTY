@@ -1,15 +1,23 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, time::{Duration, Instant}};
 
 use crc32fast::Hasher;
 
 use crate::{
     payload::{Defaults, RenderFrame, DEFAULT_PAGE_TIMEOUT_MS, DEFAULT_SCROLL_MS},
-    Result,
+    Error, Result,
 };
+
+#[derive(Clone)]
+struct FrameEntry {
+    frame: RenderFrame,
+    expires_at: Option<Instant>,
+}
+
+pub const MAX_FRAME_BYTES: usize = 512;
 
 /// Maintains a queue of render frames and deduplicates identical payloads.
 pub struct RenderState {
-    pages: VecDeque<RenderFrame>,
+    pages: VecDeque<FrameEntry>,
     last_crc: Option<u32>,
     defaults: Defaults,
 }
@@ -28,37 +36,62 @@ impl RenderState {
 
     /// Ingest a JSON frame string. Returns Some(frame) if it is new, None if duplicate.
     pub fn ingest(&mut self, raw: &str) -> Result<Option<RenderFrame>> {
+        self.prune_expired(Instant::now());
+        if raw.as_bytes().len() > MAX_FRAME_BYTES {
+            return Err(Error::Parse(format!(
+                "frame exceeds {MAX_FRAME_BYTES} bytes"
+            )));
+        }
+
         let crc = checksum_raw(raw);
         if self.last_crc == Some(crc) {
             return Ok(None);
         }
         let frame = RenderFrame::from_payload_json_with_defaults(raw, self.defaults)?;
+        let expires_at = frame
+            .duration_ms
+            .map(|ms| Instant::now() + Duration::from_millis(ms));
         self.last_crc = Some(crc);
-        self.pages.push_back(frame.clone());
+        self.pages.push_back(FrameEntry {
+            frame: frame.clone(),
+            expires_at,
+        });
         Ok(Some(frame))
     }
 
     /// Advance to the next page/frame if available.
     pub fn next_page(&mut self) -> Option<RenderFrame> {
-        if self.pages.is_empty() {
-            return None;
-        }
-        let front = self.pages.pop_front();
-        if let Some(frame) = front {
-            self.pages.push_back(frame.clone());
-            Some(frame)
-        } else {
-            None
-        }
+        self.prune_expired(Instant::now());
+        let front = self.pages.pop_front()?;
+        let frame = front.frame.clone();
+        self.pages.push_back(front);
+        Some(frame)
     }
 
     /// Get the current frame without rotating.
-    pub fn current(&self) -> Option<&RenderFrame> {
-        self.pages.front()
+    pub fn current(&mut self) -> Option<&RenderFrame> {
+        self.prune_expired(Instant::now());
+        self.pages.front().map(|f| &f.frame)
     }
 
-    pub fn len(&self) -> usize {
+    pub fn len(&mut self) -> usize {
+        self.prune_expired(Instant::now());
         self.pages.len()
+    }
+
+    fn prune_expired(&mut self, now: Instant) {
+        while let Some(front) = self.pages.front() {
+            if let Some(expiry) = front.expires_at {
+                if expiry <= now {
+                    self.pages.pop_front();
+                    continue;
+                }
+            }
+            break;
+        }
+        if self.pages.is_empty() {
+            self.last_crc = None;
+        }
     }
 }
 
@@ -93,5 +126,27 @@ mod tests {
         assert_eq!(second.line1, "C");
         let third = state.next_page().unwrap();
         assert_eq!(third.line1, "A");
+    }
+
+    #[test]
+    fn rejects_oversize_frame() {
+        let mut state = RenderState::new(None);
+        let long = format!(
+            r#"{{"line1":"{}","line2":""}}"#,
+            "x".repeat(MAX_FRAME_BYTES)
+        );
+        let err = state.ingest(&long).unwrap_err();
+        assert!(format!("{err}").contains("exceeds"));
+    }
+
+    #[test]
+    fn expires_frame_after_ttl() {
+        let mut state = RenderState::new(None);
+        state
+            .ingest(r#"{"line1":"A","line2":"B","duration_ms":1}"#)
+            .unwrap();
+        assert_eq!(state.len(), 1);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        assert!(state.next_page().is_none(), "expired frame should be dropped");
     }
 }

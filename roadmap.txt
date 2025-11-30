@@ -20,10 +20,10 @@ Input protocol (from sibling)
 - TODO: define custom icon indices 0-7 to map to CGRAM slots preloaded at startup.
 - Metrics payloads (from sibling): uptime, free RAM, CPU %, disk %, temperature. Include normalized percentages to drive bar graphs.
 - Simple payload schema ideas (pick a small subset to support):
-  - Fields: `line1`, `line2` (plain text), `backlight` (optional; only send when false to turn off), `blink` (0/1 for backlight blink on error), `scroll_speed_ms` (optional; default from config), `bar` (percent, defaults to 0–100) or `bar_value` + optional `bar_max` (default 100).
-  - Commands: `clear=1`, `test=1` (writes “TEST”), `heartbeat=1` (optional ping to keep display alive), `priority` (0–9) to avoid lower-priority updates overwriting active alerts.
-  - Alerts: `alert=1` sets backlight blink and prefixes “ALERT:” on line 1; `alert_msg` overrides line 2.
-  - Duration: `ttl_ms` to keep a message on screen before it expires (else stickiness until next frame).
+  - Fields: `line1`, `line2` (plain text), `backlight` (optional; only send when false to turn off), `blink` (0/1 for backlight blink on error), `scroll_speed_ms` (optional; default from config), `bar` (percent, defaults to 0-100) or `bar_value` + optional `bar_max` (default 100).
+  - Commands: `clear=1`, `test=1` (writes "TEST"), `heartbeat=1` (optional ping to keep display alive), `priority` (0-9) to avoid lower-priority updates overwriting active alerts.
+  - Alerts: `alert=1` sets backlight blink and prefixes "ALERT:" on line 1; `alert_msg` overrides line 2.
+  - Duration: `duration_ms` to keep a message on screen before it expires (else stickiness until next frame); accept legacy `ttl_ms` too.
   - Modes: `mode=dashboard|scroll|banner` (dashboard = summary + bar; scroll = marquee long text; banner = single line scrolling).
   - Truncation: if `scroll=0` and text exceeds columns, truncate with ellipsis; if `scroll=1`, auto marquee.
   - Bar graph: `bar_label` to show short label on line 1 (e.g., “CPU 42%”), with `bar` on line 2.

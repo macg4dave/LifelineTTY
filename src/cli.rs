@@ -1,4 +1,4 @@
-use crate::{Error, Result};
+use crate::{config::Pcf8574Addr, Error, Result};
 
 /// Options for the `run` command; values are `None` when not provided on CLI.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -8,6 +8,9 @@ pub struct RunOptions {
     pub cols: Option<u8>,
     pub rows: Option<u8>,
     pub payload_file: Option<String>,
+    pub backoff_initial_ms: Option<u64>,
+    pub backoff_max_ms: Option<u64>,
+    pub pcf8574_addr: Option<Pcf8574Addr>,
 }
 
 /// Parsed command-line intent.
@@ -60,6 +63,9 @@ impl Command {
             "  --cols <number>   LCD columns (default: 20)\n",
             "  --rows <number>   LCD rows (default: 4)\n",
             "  --payload-file <path>  Load a local JSON payload and render it once (testing helper)\n",
+            "  --backoff-initial-ms <number>  Initial reconnect backoff (default: 500)\n",
+            "  --backoff-max-ms <number>      Maximum reconnect backoff (default: 10000)\n",
+            "  --pcf8574-addr <auto|0xNN>     PCF8574 I2C address or 'auto' to probe (default: auto)\n",
             "  -h, --help        Show this help\n",
             "  -V, --version     Show version\n",
         )
@@ -102,6 +108,37 @@ fn parse_run_options(iter: &mut std::slice::Iter<String>) -> Result<RunOptions> 
             "--payload-file" => {
                 opts.payload_file = Some(take_value(flag, iter)?);
             }
+            "--backoff-initial-ms" => {
+                let raw = take_value(flag, iter)?;
+                opts.backoff_initial_ms = Some(
+                    raw.parse().map_err(|_| {
+                        Error::InvalidArgs(
+                            "backoff-initial-ms must be a positive integer".to_string(),
+                        )
+                    })?,
+                );
+            }
+            "--backoff-max-ms" => {
+                let raw = take_value(flag, iter)?;
+                opts.backoff_max_ms = Some(
+                    raw.parse().map_err(|_| {
+                        Error::InvalidArgs(
+                            "backoff-max-ms must be a positive integer".to_string(),
+                        )
+                    })?,
+                );
+            }
+            "--pcf8574-addr" => {
+                let raw = take_value(flag, iter)?;
+                opts.pcf8574_addr = Some(
+                    raw.parse().map_err(|_| {
+                        Error::InvalidArgs(
+                            "pcf8574-addr must be 'auto' or a hex/decimal address (e.g., 0x27)"
+                                .to_string(),
+                        )
+                    })?,
+                );
+            }
             other => {
                 return Err(Error::InvalidArgs(format!(
                     "unknown flag '{other}', try --help"
@@ -143,6 +180,12 @@ mod tests {
             "2".into(),
             "--payload-file".into(),
             "/tmp/payload.json".into(),
+            "--backoff-initial-ms".into(),
+            "750".into(),
+            "--backoff-max-ms".into(),
+            "9000".into(),
+            "--pcf8574-addr".into(),
+            "0x23".into(),
         ];
         let expected = RunOptions {
             device: Some("/dev/ttyUSB0".into()),
@@ -150,6 +193,9 @@ mod tests {
             cols: Some(16),
             rows: Some(2),
             payload_file: Some("/tmp/payload.json".into()),
+            backoff_initial_ms: Some(750),
+            backoff_max_ms: Some(9000),
+            pcf8574_addr: Some(Pcf8574Addr::Addr(0x23)),
         };
         let cmd = Command::parse(&args).unwrap();
         assert_eq!(cmd, Command::Run(expected));
@@ -169,6 +215,9 @@ mod tests {
             cols: None,
             rows: None,
             payload_file: Some("/tmp/payload.json".into()),
+            backoff_initial_ms: None,
+            backoff_max_ms: None,
+            pcf8574_addr: None,
         };
         let cmd = Command::parse(&args).unwrap();
         assert_eq!(cmd, Command::Run(expected));

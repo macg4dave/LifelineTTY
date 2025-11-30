@@ -8,14 +8,14 @@ Transport
 
 Frame structure (suggested keys)
 - Required: `line1`, `line2` (strings; may be empty).
-- Optional fast-changing fields: `bar` (0–100) or `bar_value` (+ optional `bar_max`, default 100), `bar_label`, `scroll_speed_ms`, `blink` (bool), `backlight` (only send when false to turn off), `ttl_ms`, `page_timeout_ms`.
+- Optional fast-changing fields: `bar` (0-100) or `bar_value` (+ optional `bar_max`, default 100), `bar_label`, `scroll_speed_ms`, `blink` (bool), `backlight` (only send when false to turn off), `duration_ms` (alias: `ttl_ms`), `page_timeout_ms`.
 - Optional infrequent fields: `hostname`, `ip`, labels. Send once, cache thereafter.
 - Optional checksum: `checksum` (hex). If present and invalid, daemon drops the frame.
 
 Behavior rules
 - Auto-scroll: any line longer than display width scrolls at default speed; `scroll_speed_ms` overrides.
 - Bar rendering: use `bar` percent if provided; otherwise compute percent from `bar_value` / `bar_max` (clamped to 100).
-- Alerts: `blink=true` + `ttl_ms` can keep alert visible temporarily.
+- Alerts: `blink=true` + `duration_ms` can keep alert visible temporarily.
 - Paging: daemon can cache multiple frames/pages; it auto-advances on `page_timeout_ms` (payload or config default) and can be advanced via a push-button.
 - Heartbeat: send periodic frames or heartbeat flag to indicate liveness; daemon shows an icon if no frames arrive within a grace period.
 
@@ -28,8 +28,8 @@ Example frames
 1) Dashboard with bar (fast metric):
 {"line1":"Up 12:34  CPU 42%","line2":"","bar":42}
 
-2) Alert with TTL:
-{"line1":"ALERT: Temp","line2":"85C","blink":true,"ttl_ms":5000}
+2) Alert with duration:
+{"line1":"ALERT: Temp","line2":"85C","blink":true,"duration_ms":5000}
 
 3) Long text auto-scroll with custom speed:
 {"line1":"This message will scroll automatically across the display because it is long","line2":"","scroll_speed_ms":200}
@@ -48,3 +48,4 @@ Notes for sister program
 - Use newline `\n` to delimit; ensure each frame is complete before sending.
 - If you include `checksum`, pick a simple CRC32/hex; daemon drops mismatches.
 - If backlight should stay on, omit `backlight`; send `backlight:false` to turn it off.
+- CGRAM map: 0-5 bar levels, 6 heartbeat/heart, 7 battery/misc icon (arrow can use ASCII `>`).

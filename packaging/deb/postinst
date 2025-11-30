@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+
+# Refresh systemd unit cache after install/upgrade.
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    echo "seriallcd installed. Enable with: systemctl enable --now seriallcd.service"
+fi
+
+exit 0

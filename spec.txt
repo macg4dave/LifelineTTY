@@ -8,11 +8,9 @@ Transport
 
 Frame structure (suggested keys)
 - Required: `line1`, `line2` (strings; may be empty).
-- Optional fast-changing fields: `bar` (0–100, default scale 100) or `bar_value` (+ optional `bar_max`, default 100), `bar_label`, `scroll_speed_ms` (uses config default if absent), `blink` (bool), `backlight` (only send when false to turn off), `priority` (0–9), `ttl_ms`, `page_timeout_ms`, `icons` ([0..7]).
+- Optional fast-changing fields: `bar` (0–100) or `bar_value` (+ optional `bar_max`, default 100), `bar_label`, `scroll_speed_ms`, `blink` (bool), `backlight` (only send when false to turn off), `priority` (0–9), `ttl_ms`, `page_timeout_ms`, `icons` ([0..7]).
 - Optional infrequent fields: `hostname`, `ip`, labels. Send once, cache thereafter.
-- Optional control: `clear` (bool), `test` (bool).
-- Optional version: `v` (int). If present and unsupported, daemon drops the frame.
-- Optional checksum: `checksum` (hex CRC32 recommended). If present and invalid, daemon drops the frame. Can be used to detect changed static payloads (e.g., hostname/IP) and skip re-rendering unchanged data.
+- Optional checksum: `checksum` (hex). If present and invalid, daemon drops the frame.
 
 Behavior rules
 - Auto-scroll: any line longer than display width scrolls at default speed; `scroll_speed_ms` overrides.

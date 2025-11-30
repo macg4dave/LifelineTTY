@@ -1,0 +1,36 @@
+LCD Output Features (how the screen will look)
+
+- Dashboard mode (default):
+  - Line 1: status summary, e.g., “Up 12:34  CPU 42%”
+  - Line 2: bar graph for a key metric (CPU/RAM/disk) using custom block chars (0–5/6 levels).
+
+- Bar graphs:
+  - Auto-computed from `bar_value` + optional `bar_max` (default 100). Example: “NET 650/1000” renders a ~65% bar.
+  - Optional label: show a short prefix on line 1 (e.g., “NET 65%”) with the bar on line 2.
+
+- Alerts:
+  - Backlight blink.
+  - Line 1 prefixed with “ALERT:” or short message (e.g., “ALERT: Temp”).
+  - Line 2 shows detail (e.g., “85C”).
+  - TTL/priority keeps alerts visible and suppresses lower-priority updates.
+
+- Scrolling text:
+  - Any line longer than the display auto-scrolls (marquee) at a default speed; `scroll_speed_ms` can slow/speed it.
+  - If scrolling is disabled, truncate with ellipsis.
+
+- Custom icons:
+  - CGRAM slots 0–5 reserved for bar blocks, slot 6 heartbeat, slot 7 free for sibling payloads.
+  - Icons can be embedded inline via `{0xNN}` placeholders (e.g., “NET {0x00} 12.3Mbps”).
+
+- Heartbeat:
+  - A tiny icon (slot 6) can pulse or toggle to show the daemon is alive even if data is stale.
+
+- Error/diagnostics:
+  - On parse/validation errors, show “ERR PARSE” (or similar) and blink backlight.
+  - Optionally clear or show “offline” on shutdown.
+
+- Test pattern:
+  - `test=1` payload writes “TEST PATTERN” on line 1 and a second line confirming backlight.
+
+- Backlight:
+  - On by default; can be turned off explicitly; blink on alert/error; otherwise stable.

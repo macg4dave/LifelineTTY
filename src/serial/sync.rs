@@ -4,7 +4,9 @@ use std::io;
 /// Lightweight serial placeholder. Replace with a real transport later.
 #[derive(Debug)]
 pub struct SerialPort {
+    #[allow(dead_code)]
     device: String,
+    #[allow(dead_code)]
     baud: u32,
     port: Option<Box<dyn serialport::SerialPort>>,
 }

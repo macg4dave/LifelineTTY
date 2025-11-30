@@ -2,8 +2,8 @@ use crate::{Error, Result};
 use crc32fast::Hasher;
 use serde::{Deserialize, Serialize};
 
-pub const DEFAULT_SCROLL_MS: u64 = 250;
-pub const DEFAULT_PAGE_TIMEOUT_MS: u64 = 4000;
+use super::icons::{parse_display_mode, parse_icons};
+use super::{DisplayMode, Icon, DEFAULT_PAGE_TIMEOUT_MS, DEFAULT_SCROLL_MS};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Defaults {
@@ -56,20 +56,6 @@ pub struct Payload {
     pub checksum: Option<String>,
     #[serde(default)]
     pub config_reload: Option<bool>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DisplayMode {
-    Normal,
-    Dashboard,
-    Banner,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Icon {
-    Battery,
-    Arrow,
-    Heart,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -160,23 +146,8 @@ impl RenderFrame {
             None
         };
 
-        let mode = match payload.mode.as_deref() {
-            Some("dashboard") => DisplayMode::Dashboard,
-            Some("banner") => DisplayMode::Banner,
-            _ => DisplayMode::Normal,
-        };
-
-        let icons = payload
-            .icons
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|name| match name.to_lowercase().as_str() {
-                "battery" => Some(Icon::Battery),
-                "arrow" => Some(Icon::Arrow),
-                "heart" => Some(Icon::Heart),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
+        let mode = parse_display_mode(payload.mode.clone());
+        let icons = parse_icons(payload.icons.clone());
 
         let line1 = payload.line1;
         let mut line2 = payload.line2;

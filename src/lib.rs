@@ -3,6 +3,7 @@ pub mod cli;
 pub mod config;
 pub mod lcd;
 pub mod lcd_driver;
+pub mod display;
 pub mod payload;
 pub mod state;
 pub mod serial;

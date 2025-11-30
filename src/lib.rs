@@ -3,6 +3,8 @@ pub mod cli;
 pub mod config;
 pub mod lcd;
 pub mod lcd_driver;
+pub mod payload;
+pub mod state;
 pub mod serial;
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -11,6 +13,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub enum Error {
     InvalidArgs(String),
     Io(std::io::Error),
+    Parse(String),
+    ChecksumMismatch,
 }
 
 impl std::fmt::Display for Error {
@@ -18,6 +22,8 @@ impl std::fmt::Display for Error {
         match self {
             Error::InvalidArgs(msg) => write!(f, "invalid arguments: {msg}"),
             Error::Io(err) => write!(f, "io error: {err}"),
+            Error::Parse(msg) => write!(f, "parse error: {msg}"),
+            Error::ChecksumMismatch => write!(f, "checksum mismatch"),
         }
     }
 }

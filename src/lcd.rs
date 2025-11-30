@@ -32,6 +32,14 @@ impl Lcd {
         // TODO: send trimmed content to the LCD over serial.
         Ok(())
     }
+
+    pub fn cols(&self) -> u8 {
+        self.cols
+    }
+
+    pub fn rows(&self) -> u8 {
+        self.rows
+    }
 }
 
 #[cfg(test)]

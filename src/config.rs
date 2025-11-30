@@ -9,6 +9,8 @@ pub const DEFAULT_DEVICE: &str = "/dev/ttyAMA0";
 pub const DEFAULT_BAUD: u32 = 115_200;
 pub const DEFAULT_COLS: u8 = 20;
 pub const DEFAULT_ROWS: u8 = 4;
+pub const DEFAULT_SCROLL_MS: u64 = 250;
+pub const DEFAULT_PAGE_TIMEOUT_MS: u64 = 4000;
 const CONFIG_DIR_NAME: &str = ".serial_lcd";
 const CONFIG_FILE_NAME: &str = "config.toml";
 
@@ -19,6 +21,9 @@ pub struct Config {
     pub baud: u32,
     pub cols: u8,
     pub rows: u8,
+    pub scroll_speed_ms: u64,
+    pub page_timeout_ms: u64,
+    pub button_gpio_pin: Option<u8>,
 }
 
 impl Default for Config {
@@ -28,6 +33,9 @@ impl Default for Config {
             baud: DEFAULT_BAUD,
             cols: DEFAULT_COLS,
             rows: DEFAULT_ROWS,
+            scroll_speed_ms: DEFAULT_SCROLL_MS,
+            page_timeout_ms: DEFAULT_PAGE_TIMEOUT_MS,
+            button_gpio_pin: None,
         }
     }
 }
@@ -62,8 +70,19 @@ impl Config {
 device = \"{}\"\n\
 baud = {}\n\
 cols = {}\n\
-rows = {}\n",
-            self.device, self.baud, self.cols, self.rows
+rows = {}\n\
+scroll_speed_ms = {}\n\
+page_timeout_ms = {}\n\
+button_gpio_pin = {}\n",
+            self.device,
+            self.baud,
+            self.cols,
+            self.rows,
+            self.scroll_speed_ms,
+            self.page_timeout_ms,
+            self.button_gpio_pin
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| "null".into())
         );
         fs::write(path, contents)?;
         Ok(())
@@ -100,6 +119,28 @@ rows = {}\n",
                     cfg.rows = value.parse().map_err(|_| {
                         Error::InvalidArgs(format!("invalid rows value on line {}", idx + 1))
                     })?;
+                }
+                "scroll_speed_ms" => {
+                    cfg.scroll_speed_ms = value.parse().map_err(|_| {
+                        Error::InvalidArgs(format!("invalid scroll_speed_ms on line {}", idx + 1))
+                    })?;
+                }
+                "page_timeout_ms" => {
+                    cfg.page_timeout_ms = value.parse().map_err(|_| {
+                        Error::InvalidArgs(format!("invalid page_timeout_ms on line {}", idx + 1))
+                    })?;
+                }
+                "button_gpio_pin" => {
+                    if value == "null" {
+                        cfg.button_gpio_pin = None;
+                    } else {
+                        cfg.button_gpio_pin = Some(value.parse().map_err(|_| {
+                            Error::InvalidArgs(format!(
+                                "invalid button_gpio_pin on line {}",
+                                idx + 1
+                            ))
+                        })?);
+                    }
                 }
                 other => {
                     return Err(Error::InvalidArgs(format!(
@@ -150,6 +191,9 @@ mod tests {
             baud = 9600
             cols = 16
             rows = 2
+            scroll_speed_ms = 300
+            page_timeout_ms = 4500
+            button_gpio_pin = 17
         "#;
         fs::write(&path, contents).unwrap();
         let cfg = Config::load_from_path(&path).unwrap();
@@ -157,6 +201,9 @@ mod tests {
         assert_eq!(cfg.baud, 9600);
         assert_eq!(cfg.cols, 16);
         assert_eq!(cfg.rows, 2);
+        assert_eq!(cfg.scroll_speed_ms, 300);
+        assert_eq!(cfg.page_timeout_ms, 4500);
+        assert_eq!(cfg.button_gpio_pin, Some(17));
         let _ = fs::remove_file(path);
     }
 
@@ -177,6 +224,9 @@ mod tests {
             baud: 57_600,
             cols: 20,
             rows: 4,
+            scroll_speed_ms: 250,
+            page_timeout_ms: 4000,
+            button_gpio_pin: Some(22),
         };
         cfg.save_to_path(&path).unwrap();
         let loaded = Config::load_from_path(&path).unwrap();

@@ -118,3 +118,11 @@ Details:
 
 ## development machine
 Target platform is Raspberry Pi 1 Model A (ARMv6) BCM2835. Development can occur on an x86_64 Linux or macOS machine using cross-compilation or QEMU emulation docker. Ensure all builds and tests pass on the target ARMv6 architecture before finalizing changes.
+
+## Documentation
+* Document all public functions/types with Rustdoc.
+* Update README.md with any user-facing changes.
+* Maintain an up-to-date roadmap.txt with planned features and TODOs.
+* Keep spec.txt aligned with implemented protocol and behaviors.
+* Include comments in code for complex logic or non-obvious decisions.
+* Ensure all documentation changes are part of the same PR as code changes when relevant.

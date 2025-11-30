@@ -1,10 +1,12 @@
 use crate::{Error, Result};
+use std::io;
 
 /// Lightweight serial placeholder. Replace with a real transport later.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct SerialPort {
     device: String,
     baud: u32,
+    port: Option<Box<dyn serialport::SerialPort>>,
 }
 
 impl SerialPort {
@@ -15,17 +17,77 @@ impl SerialPort {
             ));
         }
 
-        // TODO: open and configure the real serial device.
+        let port = serialport::new(device, baud)
+            .timeout(std::time::Duration::from_millis(200))
+            .open()
+            .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+
         Ok(Self {
             device: device.to_string(),
             baud,
+            port: Some(port),
         })
     }
 
-    pub fn send_line(&self, line: &str) -> Result<()> {
-        let _ = (self, line);
-        // TODO: write the line (plus framing) to the serial port.
+    pub fn send_line(&mut self, line: &str) -> Result<()> {
+        let port = self
+            .port
+            .as_mut()
+            .ok_or_else(|| Error::InvalidArgs("serial port not connected".into()))?;
+
+        let mut buf = line.as_bytes().to_vec();
+        buf.push(b'\n');
+        port.write_all(&buf)?;
+        port.flush()?;
         Ok(())
+    }
+
+    /// Read a single line (newline-terminated). Returns 0 on timeout.
+    pub fn read_line(&mut self, buf: &mut String) -> Result<usize> {
+        buf.clear();
+        let port = self
+            .port
+            .as_deref_mut()
+            .ok_or_else(|| Error::InvalidArgs("serial port not connected".into()))?;
+
+        let mut byte = [0u8; 1];
+        let mut total = 0;
+        loop {
+            match port.read(&mut byte) {
+                Ok(0) => return Ok(total),
+                Ok(_) => {
+                    total += 1;
+                    let b = byte[0];
+                    if b == b'\n' {
+                        return Ok(total);
+                    }
+                    if b != b'\r' {
+                        buf.push(b as char);
+                    }
+                }
+                Err(e) if e.kind() == io::ErrorKind::TimedOut => return Ok(0),
+                Err(e) => return Err(Error::Io(e)),
+            }
+        }
+    }
+
+    /// Provide a temporary reader over the serial port.
+    pub fn take_reader(&mut self) -> Result<SerialReader<'_>> {
+        let port = self
+            .port
+            .as_deref_mut()
+            .ok_or_else(|| Error::InvalidArgs("serial port not connected".into()))?;
+        Ok(SerialReader { port })
+    }
+}
+
+pub struct SerialReader<'a> {
+    port: &'a mut dyn serialport::SerialPort,
+}
+
+impl<'a> std::io::Read for SerialReader<'a> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.port.read(buf)
     }
 }
 
@@ -40,9 +102,15 @@ mod tests {
     }
 
     #[test]
-    fn builds_serial_port() {
-        let port = SerialPort::connect("/dev/ttyUSB0", 9600).unwrap();
-        assert_eq!(port.device, "/dev/ttyUSB0");
-        assert_eq!(port.baud, 9600);
+    fn connects_or_returns_io_error() {
+        let res = SerialPort::connect("/dev/ttyUSB0", 9600);
+        match res {
+            Ok(port) => {
+                assert_eq!(port.device, "/dev/ttyUSB0");
+                assert_eq!(port.baud, 9600);
+            }
+            Err(Error::Io(_)) => { /* acceptable in test env without device */ }
+            Err(other) => panic!("unexpected error: {other}"),
+        }
     }
 }

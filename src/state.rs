@@ -1,4 +1,7 @@
-use std::{collections::VecDeque, time::{Duration, Instant}};
+use std::{
+    collections::VecDeque,
+    time::{Duration, Instant},
+};
 
 use crc32fast::Hasher;
 
@@ -152,6 +155,9 @@ mod tests {
             .unwrap();
         assert_eq!(state.len(), 1);
         std::thread::sleep(std::time::Duration::from_millis(5));
-        assert!(state.next_page().is_none(), "expired frame should be dropped");
+        assert!(
+            state.next_page().is_none(),
+            "expired frame should be dropped"
+        );
     }
 }

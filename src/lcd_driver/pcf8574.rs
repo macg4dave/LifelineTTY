@@ -3,7 +3,10 @@ use crate::{lcd_driver::I2cBus, Error, Result};
 #[cfg(target_os = "linux")]
 fn map_i2c_err(err: rppal::i2c::Error) -> Error {
     // Wrap rppal errors so the caller sees a standard IO error payload.
-    Error::Io(std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))
+    Error::Io(std::io::Error::new(
+        std::io::ErrorKind::Other,
+        err.to_string(),
+    ))
 }
 
 /// Linux implementation using rppal's I2C.
@@ -30,7 +33,11 @@ impl RppalBus {
     /// Returns the bus and the detected address (or the fallback if none respond).
     pub fn autodetect_default() -> Result<(Self, u8)> {
         let mut inner = rppal::i2c::I2c::new().map_err(map_i2c_err)?;
-        let addr = detect_address(&mut inner, &[0x27, 0x26, 0x25, 0x24, 0x23, 0x22, 0x21, 0x20], 0x27);
+        let addr = detect_address(
+            &mut inner,
+            &[0x27, 0x26, 0x25, 0x24, 0x23, 0x22, 0x21, 0x20],
+            0x27,
+        );
         Ok((Self { inner }, addr))
     }
 
@@ -42,7 +49,9 @@ impl RppalBus {
 #[cfg(target_os = "linux")]
 impl I2cBus for RppalBus {
     fn write_byte(&mut self, addr: u8, byte: u8) -> Result<()> {
-        self.inner.set_slave_address(addr.into()).map_err(map_i2c_err)?;
+        self.inner
+            .set_slave_address(addr.into())
+            .map_err(map_i2c_err)?;
         self.inner.block_write(byte, &[]).map_err(map_i2c_err)
     }
 }

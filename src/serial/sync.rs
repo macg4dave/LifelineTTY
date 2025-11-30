@@ -20,9 +20,14 @@ impl SerialPort {
         }
 
         let port = serialport::new(device, baud)
-            .timeout(std::time::Duration::from_millis(200))
+            .timeout(std::time::Duration::from_millis(500))
             .open()
-            .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+            .map_err(|e| {
+                Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    e.to_string(),
+                ))
+            })?;
 
         Ok(Self {
             device: device.to_string(),

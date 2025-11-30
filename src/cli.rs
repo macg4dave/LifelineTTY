@@ -11,6 +11,9 @@ pub struct RunOptions {
     pub backoff_initial_ms: Option<u64>,
     pub backoff_max_ms: Option<u64>,
     pub pcf8574_addr: Option<Pcf8574Addr>,
+    pub log_level: Option<String>,
+    pub log_file: Option<String>,
+    pub demo: bool,
 }
 
 /// Parsed command-line intent.
@@ -66,6 +69,9 @@ impl Command {
             "  --backoff-initial-ms <number>  Initial reconnect backoff (default: 500)\n",
             "  --backoff-max-ms <number>      Maximum reconnect backoff (default: 10000)\n",
             "  --pcf8574-addr <auto|0xNN>     PCF8574 I2C address or 'auto' to probe (default: auto)\n",
+            "  --log-level <error|warn|info|debug|trace>  Log verbosity (default: info)\n",
+            "  --log-file <path>              Append logs to a file (also honors SERIALLCD_LOG_PATH)\n",
+            "  --demo                         Run built-in demo pages on the LCD (no serial input)\n",
             "  -h, --help        Show this help\n",
             "  -V, --version     Show version\n",
         )
@@ -86,58 +92,54 @@ fn parse_run_options(iter: &mut std::slice::Iter<String>) -> Result<RunOptions> 
             }
             "--baud" => {
                 let raw = take_value(flag, iter)?;
-                opts.baud = Some(
-                    raw.parse()
-                        .map_err(|_| Error::InvalidArgs("baud must be a positive integer".to_string()))?,
-                );
+                opts.baud = Some(raw.parse().map_err(|_| {
+                    Error::InvalidArgs("baud must be a positive integer".to_string())
+                })?);
             }
             "--cols" => {
                 let raw = take_value(flag, iter)?;
-                opts.cols = Some(
-                    raw.parse()
-                        .map_err(|_| Error::InvalidArgs("cols must be a positive integer".to_string()))?,
-                );
+                opts.cols = Some(raw.parse().map_err(|_| {
+                    Error::InvalidArgs("cols must be a positive integer".to_string())
+                })?);
             }
             "--rows" => {
                 let raw = take_value(flag, iter)?;
-                opts.rows = Some(
-                    raw.parse()
-                        .map_err(|_| Error::InvalidArgs("rows must be a positive integer".to_string()))?,
-                );
+                opts.rows = Some(raw.parse().map_err(|_| {
+                    Error::InvalidArgs("rows must be a positive integer".to_string())
+                })?);
             }
             "--payload-file" => {
                 opts.payload_file = Some(take_value(flag, iter)?);
             }
             "--backoff-initial-ms" => {
                 let raw = take_value(flag, iter)?;
-                opts.backoff_initial_ms = Some(
-                    raw.parse().map_err(|_| {
-                        Error::InvalidArgs(
-                            "backoff-initial-ms must be a positive integer".to_string(),
-                        )
-                    })?,
-                );
+                opts.backoff_initial_ms = Some(raw.parse().map_err(|_| {
+                    Error::InvalidArgs("backoff-initial-ms must be a positive integer".to_string())
+                })?);
             }
             "--backoff-max-ms" => {
                 let raw = take_value(flag, iter)?;
-                opts.backoff_max_ms = Some(
-                    raw.parse().map_err(|_| {
-                        Error::InvalidArgs(
-                            "backoff-max-ms must be a positive integer".to_string(),
-                        )
-                    })?,
-                );
+                opts.backoff_max_ms = Some(raw.parse().map_err(|_| {
+                    Error::InvalidArgs("backoff-max-ms must be a positive integer".to_string())
+                })?);
             }
             "--pcf8574-addr" => {
                 let raw = take_value(flag, iter)?;
-                opts.pcf8574_addr = Some(
-                    raw.parse().map_err(|_| {
-                        Error::InvalidArgs(
-                            "pcf8574-addr must be 'auto' or a hex/decimal address (e.g., 0x27)"
-                                .to_string(),
-                        )
-                    })?,
-                );
+                opts.pcf8574_addr = Some(raw.parse().map_err(|_| {
+                    Error::InvalidArgs(
+                        "pcf8574-addr must be 'auto' or a hex/decimal address (e.g., 0x27)"
+                            .to_string(),
+                    )
+                })?);
+            }
+            "--log-level" => {
+                opts.log_level = Some(take_value(flag, iter)?);
+            }
+            "--log-file" => {
+                opts.log_file = Some(take_value(flag, iter)?);
+            }
+            "--demo" => {
+                opts.demo = true;
             }
             other => {
                 return Err(Error::InvalidArgs(format!(
@@ -186,6 +188,11 @@ mod tests {
             "9000".into(),
             "--pcf8574-addr".into(),
             "0x23".into(),
+            "--log-level".into(),
+            "debug".into(),
+            "--log-file".into(),
+            "/tmp/seriallcd.log".into(),
+            "--demo".into(),
         ];
         let expected = RunOptions {
             device: Some("/dev/ttyUSB0".into()),
@@ -196,6 +203,9 @@ mod tests {
             backoff_initial_ms: Some(750),
             backoff_max_ms: Some(9000),
             pcf8574_addr: Some(Pcf8574Addr::Addr(0x23)),
+            log_level: Some("debug".into()),
+            log_file: Some("/tmp/seriallcd.log".into()),
+            demo: true,
         };
         let cmd = Command::parse(&args).unwrap();
         assert_eq!(cmd, Command::Run(expected));
@@ -218,6 +228,9 @@ mod tests {
             backoff_initial_ms: None,
             backoff_max_ms: None,
             pcf8574_addr: None,
+            log_level: None,
+            log_file: None,
+            demo: false,
         };
         let cmd = Command::parse(&args).unwrap();
         assert_eq!(cmd, Command::Run(expected));

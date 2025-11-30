@@ -17,5 +17,10 @@ pub async fn connect(device: &str, baud: u32) -> Result<tokio_serial::SerialStre
         .stop_bits(StopBits::One)
         .flow_control(FlowControl::None)
         .open_native_async()
-        .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))
+        .map_err(|e| {
+            Error::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            ))
+        })
 }

@@ -1,25 +1,27 @@
 use crate::{
     cli::RunOptions,
-    config::{Config, DEFAULT_BAUD, DEFAULT_COLS, DEFAULT_DEVICE, DEFAULT_ROWS},
     config::Pcf8574Addr,
+    config::{Config, DEFAULT_BAUD, DEFAULT_COLS, DEFAULT_DEVICE, DEFAULT_ROWS},
     lcd::Lcd,
     payload::{Defaults as PayloadDefaults, RenderFrame},
     serial::SerialPort,
     Result,
 };
-use std::{fs, time::Instant};
+use std::{fs, str::FromStr, time::Instant};
 
-mod lifecycle;
 mod connection;
-mod render_loop;
-mod input;
-mod logger;
+mod demo;
 mod events;
+mod input;
+mod lifecycle;
+mod logger;
+mod render_loop;
 
-use connection::{attempt_serial_connect, BackoffController};
-use render_loop::run_render_loop;
 use crate::display::overlays::{render_frame_once, render_reconnecting};
-pub(crate) use logger::Logger;
+use connection::{attempt_serial_connect, BackoffController};
+use demo::run_demo;
+pub(crate) use logger::{LogLevel, Logger};
+use render_loop::run_render_loop;
 
 /// Config for the daemon.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,6 +37,9 @@ pub struct AppConfig {
     pub backoff_initial_ms: u64,
     pub backoff_max_ms: u64,
     pub pcf8574_addr: Pcf8574Addr,
+    pub log_level: LogLevel,
+    pub log_file: Option<String>,
+    pub demo: bool,
 }
 
 impl Default for AppConfig {
@@ -51,6 +56,9 @@ impl Default for AppConfig {
             backoff_initial_ms: crate::config::DEFAULT_BACKOFF_INITIAL_MS,
             backoff_max_ms: crate::config::DEFAULT_BACKOFF_MAX_MS,
             pcf8574_addr: crate::config::DEFAULT_PCF8574_ADDR,
+            log_level: LogLevel::default(),
+            log_file: None,
+            demo: false,
         }
     }
 }
@@ -62,10 +70,8 @@ pub struct App {
 
 impl App {
     pub fn new(config: AppConfig) -> Self {
-        Self {
-            config,
-            logger: Logger::new(),
-        }
+        let logger = Logger::new(config.log_level, config.log_file.clone());
+        Self { config, logger }
     }
 
     pub fn from_options(opts: RunOptions) -> Result<Self> {
@@ -77,19 +83,20 @@ impl App {
     /// Entry point for the daemon. Wire up serial + LCD here.
     pub fn run(&self) -> Result<()> {
         let mut config = self.config.clone();
-        let mut lcd = Lcd::new(
-            config.cols,
-            config.rows,
-            config.pcf8574_addr.clone(),
-        )?;
+        let mut lcd = Lcd::new(config.cols, config.rows, config.pcf8574_addr.clone())?;
         lcd.render_boot_message()?;
-        self.logger.log(format!(
+        self.logger.info(format!(
             "daemon start (device={}, baud={}, cols={}, rows={})",
             config.device, config.baud, config.cols, config.rows
         ));
 
-        let mut backoff =
-            BackoffController::new(config.backoff_initial_ms, config.backoff_max_ms);
+        if config.demo {
+            self.logger
+                .info("demo mode enabled: cycling built-in pages");
+            return run_demo(&mut lcd, &mut config, &self.logger);
+        }
+
+        let mut backoff = BackoffController::new(config.backoff_initial_ms, config.backoff_max_ms);
 
         if let Some(path) = &config.payload_file {
             let defaults = PayloadDefaults {
@@ -123,9 +130,7 @@ impl App {
 impl AppConfig {
     pub fn from_sources(config: Config, opts: RunOptions) -> Self {
         Self {
-            device: opts
-                .device
-                .unwrap_or_else(|| config.device.clone()),
+            device: opts.device.unwrap_or_else(|| config.device.clone()),
             baud: opts.baud.unwrap_or(config.baud),
             cols: opts.cols.unwrap_or(config.cols),
             rows: opts.rows.unwrap_or(config.rows),
@@ -133,13 +138,18 @@ impl AppConfig {
             page_timeout_ms: config.page_timeout_ms,
             button_gpio_pin: config.button_gpio_pin,
             payload_file: opts.payload_file,
-            backoff_initial_ms: opts
-                .backoff_initial_ms
-                .unwrap_or(config.backoff_initial_ms),
+            backoff_initial_ms: opts.backoff_initial_ms.unwrap_or(config.backoff_initial_ms),
             backoff_max_ms: opts.backoff_max_ms.unwrap_or(config.backoff_max_ms),
             pcf8574_addr: opts
                 .pcf8574_addr
                 .unwrap_or_else(|| config.pcf8574_addr.clone()),
+            log_level: opts
+                .log_level
+                .as_deref()
+                .and_then(|s| LogLevel::from_str(s).ok())
+                .unwrap_or_default(),
+            log_file: opts.log_file,
+            demo: opts.demo,
         }
     }
 }
@@ -179,6 +189,9 @@ mod tests {
             backoff_initial_ms: None,
             backoff_max_ms: None,
             pcf8574_addr: None,
+            log_level: None,
+            log_file: None,
+            demo: false,
         };
         let cfg = AppConfig::from_sources(Config::default(), opts.clone());
         assert_eq!(cfg.device, "/dev/ttyUSB1");

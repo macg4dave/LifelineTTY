@@ -93,6 +93,22 @@ impl RenderFrame {
         let payload: Payload =
             serde_json::from_str(raw).map_err(|e| Error::Parse(format!("json: {e}")))?;
 
+        if let Some(bar_max) = payload.bar_max {
+            if bar_max < 1 {
+                return Err(Error::Parse("bar_max must be >= 1".into()));
+            }
+        }
+        if let (Some(value), Some(max)) = (payload.bar_value, payload.bar_max) {
+            if value > max {
+                return Err(Error::Parse("bar_value must be <= bar_max".into()));
+            }
+        }
+        if let Some(timeout) = payload.page_timeout_ms {
+            if timeout == 0 {
+                return Err(Error::Parse("page_timeout_ms must be > 0".into()));
+            }
+        }
+
         if let Some(version) = payload.version {
             const SUPPORTED_VERSION: u8 = 1;
             if version != SUPPORTED_VERSION {
@@ -126,12 +142,8 @@ impl RenderFrame {
         let backlight_on = payload.backlight.unwrap_or(true);
         let blink = payload.blink.unwrap_or(false);
         let scroll_enabled = payload.scroll.unwrap_or(true);
-        let scroll_speed_ms = payload
-            .scroll_speed_ms
-            .unwrap_or(defaults.scroll_speed_ms);
-        let page_timeout_ms = payload
-            .page_timeout_ms
-            .unwrap_or(defaults.page_timeout_ms);
+        let scroll_speed_ms = payload.scroll_speed_ms.unwrap_or(defaults.scroll_speed_ms);
+        let page_timeout_ms = payload.page_timeout_ms.unwrap_or(defaults.page_timeout_ms);
 
         let bar_percent = compute_bar_percent(&payload);
         let bar_row = if bar_percent.is_some() {
@@ -199,6 +211,14 @@ fn compute_bar_percent(payload: &Payload) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn parse(raw: &str) -> RenderFrame {
+        RenderFrame::from_payload_json(raw).unwrap()
+    }
+
+    fn parse_with_defaults(raw: &str, defaults: Defaults) -> RenderFrame {
+        RenderFrame::from_payload_json_with_defaults(raw, defaults).unwrap()
+    }
 
     #[test]
     fn parses_basic_payload_with_defaults() {
@@ -295,5 +315,152 @@ mod tests {
         let raw_legacy = r#"{"line1":"","line2":"","ttl_ms":2345}"#;
         let frame_legacy = RenderFrame::from_payload_json(raw_legacy).unwrap();
         assert_eq!(frame_legacy.duration_ms, Some(2345));
+    }
+
+    #[test]
+    fn supported_version_parses() {
+        let raw = r#"{"version":1,"line1":"V1","line2":""}"#;
+        let frame = parse(raw);
+        assert_eq!(frame.line1, "V1");
+    }
+
+    #[test]
+    fn backlight_can_be_disabled() {
+        let raw = r#"{"line1":"","line2":"","backlight":false}"#;
+        let frame = parse(raw);
+        assert!(!frame.backlight_on);
+    }
+
+    #[test]
+    fn blink_defaults_false_and_can_enable() {
+        let raw_default = r#"{"line1":"","line2":""}"#;
+        let default_frame = parse(raw_default);
+        assert!(!default_frame.blink);
+
+        let raw_blink = r#"{"line1":"","line2":"","blink":true}"#;
+        let blinking_frame = parse(raw_blink);
+        assert!(blinking_frame.blink);
+    }
+
+    #[test]
+    fn scroll_speed_override_respected() {
+        let raw = r#"{"line1":"","line2":"","scroll_speed_ms":123}"#;
+        let frame = parse(raw);
+        assert_eq!(frame.scroll_speed_ms, 123);
+    }
+
+    #[test]
+    fn page_timeout_override_respected() {
+        let raw = r#"{"line1":"","line2":"","page_timeout_ms":3210}"#;
+        let frame = parse(raw);
+        assert_eq!(frame.page_timeout_ms, 3210);
+    }
+
+    #[test]
+    fn bar_value_exceeding_max_rejected() {
+        let raw = r#"{"line1":"","line2":"","bar_value":150,"bar_max":100}"#;
+        let err = RenderFrame::from_payload_json(raw).unwrap_err();
+        assert!(format!("{err}").contains("bar_value"));
+    }
+
+    #[test]
+    fn bar_value_handles_zero_max() {
+        let raw = r#"{"line1":"","line2":"","bar_value":0,"bar_max":0}"#;
+        let err = RenderFrame::from_payload_json(raw).unwrap_err();
+        assert!(format!("{err}").contains("bar_max"));
+    }
+
+    #[test]
+    fn bar_row_defaults_to_bottom() {
+        let raw = r#"{"line1":"","line2":"","bar":10}"#;
+        let frame = parse(raw);
+        assert_eq!(frame.bar_row, Some(1));
+    }
+
+    #[test]
+    fn bar_row_can_be_top_when_requested() {
+        let raw = r#"{"line1":"","line2":"","bar":55,"bar_line1":true}"#;
+        let frame = parse(raw);
+        assert_eq!(frame.bar_row, Some(0));
+    }
+
+    #[test]
+    fn dashboard_mode_forces_bar_bottom() {
+        let raw = r#"{"line1":"","line2":"","bar":88,"bar_line1":true,"mode":"dashboard"}"#;
+        let frame = parse(raw);
+        assert_eq!(frame.bar_row, Some(1));
+    }
+
+    #[test]
+    fn banner_mode_clears_second_line() {
+        let raw = r#"{"line1":"Banner text","line2":"ignored","mode":"banner"}"#;
+        let frame = parse(raw);
+        assert_eq!(frame.line2, "");
+    }
+
+    #[test]
+    fn icons_parse_and_ignore_unknown() {
+        let raw = r#"{"line1":"","line2":"","icons":["battery","unknown","heart","ARROW"]}"#;
+        let frame = parse(raw);
+        assert_eq!(frame.icons, vec![Icon::Battery, Icon::Heart, Icon::Arrow]);
+    }
+
+    #[test]
+    fn config_reload_flag_can_enable() {
+        let raw_true = r#"{"line1":"","line2":"","config_reload":true}"#;
+        let frame_true = parse(raw_true);
+        assert!(frame_true.config_reload);
+
+        let raw_default = r#"{"line1":"","line2":""}"#;
+        let frame_default = parse(raw_default);
+        assert!(!frame_default.config_reload);
+    }
+
+    #[test]
+    fn clear_and_test_flags_default_false_and_true() {
+        let raw_default = r#"{"line1":"","line2":""}"#;
+        let frame_default = parse(raw_default);
+        assert!(!frame_default.clear);
+        assert!(!frame_default.test);
+
+        let raw_true = r#"{"line1":"","line2":"","clear":true,"test":true}"#;
+        let frame_true = parse(raw_true);
+        assert!(frame_true.clear);
+        assert!(frame_true.test);
+    }
+
+    #[test]
+    fn defaults_can_override_scroll_and_page_timeout() {
+        let raw = r#"{"line1":"","line2":""}"#;
+        let frame = parse_with_defaults(
+            raw,
+            Defaults {
+                scroll_speed_ms: 999,
+                page_timeout_ms: 7777,
+            },
+        );
+        assert_eq!(frame.scroll_speed_ms, 999);
+        assert_eq!(frame.page_timeout_ms, 7777);
+    }
+
+    #[test]
+    fn rejects_bar_max_below_one() {
+        let raw = r#"{"line1":"","line2":"","bar_value":10,"bar_max":0}"#;
+        let err = RenderFrame::from_payload_json(raw).unwrap_err();
+        assert!(format!("{err}").contains("bar_max"));
+    }
+
+    #[test]
+    fn rejects_bar_value_above_max() {
+        let raw = r#"{"line1":"","line2":"","bar_value":101,"bar_max":100}"#;
+        let err = RenderFrame::from_payload_json(raw).unwrap_err();
+        assert!(format!("{err}").contains("bar_value"));
+    }
+
+    #[test]
+    fn rejects_zero_page_timeout() {
+        let raw = r#"{"line1":"","line2":"","page_timeout_ms":0}"#;
+        let err = RenderFrame::from_payload_json(raw).unwrap_err();
+        assert!(format!("{err}").contains("page_timeout_ms"));
     }
 }

@@ -48,7 +48,9 @@ pub struct Button;
 #[cfg(not(target_os = "linux"))]
 impl Button {
     pub fn new(_pin: Option<u8>) -> Result<Self> {
-        Err(Error::InvalidArgs("button unsupported on this platform".into()))
+        Err(Error::InvalidArgs(
+            "button unsupported on this platform".into(),
+        ))
     }
 
     pub fn is_pressed(&mut self) -> bool {

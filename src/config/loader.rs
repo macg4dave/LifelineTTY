@@ -110,26 +110,17 @@ pub fn parse(raw: &str) -> Result<Config> {
             }
             "pcf8574_addr" => {
                 cfg.pcf8574_addr = super::parse_pcf_addr(value).map_err(|e| {
-                    Error::InvalidArgs(format!(
-                        "invalid pcf8574_addr on line {}: {e}",
-                        idx + 1
-                    ))
+                    Error::InvalidArgs(format!("invalid pcf8574_addr on line {}: {e}", idx + 1))
                 })?;
             }
             "backoff_initial_ms" => {
                 cfg.backoff_initial_ms = value.parse().map_err(|_| {
-                    Error::InvalidArgs(format!(
-                        "invalid backoff_initial_ms on line {}",
-                        idx + 1
-                    ))
+                    Error::InvalidArgs(format!("invalid backoff_initial_ms on line {}", idx + 1))
                 })?;
             }
             "backoff_max_ms" => {
                 cfg.backoff_max_ms = value.parse().map_err(|_| {
-                    Error::InvalidArgs(format!(
-                        "invalid backoff_max_ms on line {}",
-                        idx + 1
-                    ))
+                    Error::InvalidArgs(format!("invalid backoff_max_ms on line {}", idx + 1))
                 })?;
             }
             "button_gpio_pin" => {
@@ -137,10 +128,7 @@ pub fn parse(raw: &str) -> Result<Config> {
                     cfg.button_gpio_pin = None;
                 } else {
                     cfg.button_gpio_pin = Some(value.parse().map_err(|_| {
-                        Error::InvalidArgs(format!(
-                            "invalid button_gpio_pin on line {}",
-                            idx + 1
-                        ))
+                        Error::InvalidArgs(format!("invalid button_gpio_pin on line {}", idx + 1))
                     })?);
                 }
             }
@@ -168,7 +156,11 @@ fn config_path() -> Result<PathBuf> {
 mod tests {
     use super::*;
     use crate::config::{Config, Pcf8574Addr, DEFAULT_BACKOFF_INITIAL_MS, DEFAULT_BACKOFF_MAX_MS};
-    use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     fn temp_home(name: &str) -> PathBuf {
         let stamp = SystemTime::now()

@@ -1,5 +1,5 @@
-mod parser;
 mod icons;
+mod parser;
 
 pub use icons::{DisplayMode, Icon};
 pub use parser::{Defaults, Payload, RenderFrame};

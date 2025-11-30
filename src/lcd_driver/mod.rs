@@ -195,7 +195,12 @@ impl<B: I2cBus> Hd44780<B> {
         let mut idx = 0;
         let bytes = text.as_bytes();
         while idx < bytes.len() {
-            if bytes[idx] == b'{' && idx + 6 <= bytes.len() && bytes[idx + 1] == b'0' && (bytes[idx + 2] == b'x' || bytes[idx + 2] == b'X') && bytes[idx + 5] == b'}' {
+            if bytes[idx] == b'{'
+                && idx + 6 <= bytes.len()
+                && bytes[idx + 1] == b'0'
+                && (bytes[idx + 2] == b'x' || bytes[idx + 2] == b'X')
+                && bytes[idx + 5] == b'}'
+            {
                 if let (Some(h1), Some(h2)) = (from_hex(bytes[idx + 3]), from_hex(bytes[idx + 4])) {
                     let value = (h1 << 4) | h2;
                     self.putchar(value as char)?;
@@ -233,7 +238,7 @@ impl<B: I2cBus> Hd44780<B> {
     }
 
     /// Load multiple bitmaps sequentially starting at CGRAM address 0.
-    pub fn load_custom_bitmaps(&mut self, bitmaps: &[ [&str; 8] ]) -> Result<()> {
+    pub fn load_custom_bitmaps(&mut self, bitmaps: &[[&str; 8]]) -> Result<()> {
         for (idx, rows) in bitmaps.iter().enumerate().take(8) {
             self.load_custom_bitmap(idx as u8, *rows)?;
         }
@@ -339,7 +344,7 @@ mod tests {
         // Expect initial zero write, then reset sequence and function set.
         let writes = &driver.bus.writes;
         assert_eq!(writes[0], (0x27, 0)); // leading zero byte
-        // First init nibble 0x30 => 0x34 (E high), 0x30 (E low)
+                                          // First init nibble 0x30 => 0x34 (E high), 0x30 (E low)
         assert_eq!(writes[1], (0x27, 0x34));
         assert_eq!(writes[2], (0x27, 0x30));
         // Last function set low nibble should carry backlight bit.
@@ -394,14 +399,7 @@ mod tests {
     fn loads_custom_bitmap_rows() {
         let mut driver = Hd44780::new(MockBus::default(), 0x27, 16, 2).unwrap();
         let heart = [
-            "01010",
-            "11111",
-            "11111",
-            "11111",
-            "01110",
-            "00100",
-            "00000",
-            "00000",
+            "01010", "11111", "11111", "11111", "01110", "00100", "00000", "00000",
         ];
         driver.load_custom_bitmap(0, heart).unwrap();
         // Cursor remains valid

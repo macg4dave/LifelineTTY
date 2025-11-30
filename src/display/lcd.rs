@@ -19,6 +19,14 @@ pub struct Lcd {
     driver: lcd_driver::Hd44780<RppalBus>,
     #[cfg(target_os = "linux")]
     addr: u8,
+    #[cfg(not(target_os = "linux"))]
+    last_lines: (String, String),
+    #[cfg(not(target_os = "linux"))]
+    backlight_on: bool,
+    #[cfg(not(target_os = "linux"))]
+    blink_on: bool,
+    #[cfg(not(target_os = "linux"))]
+    clears: usize,
 }
 
 impl Lcd {
@@ -37,13 +45,25 @@ impl Lcd {
             eprintln!("pcf8574 addr: 0x{addr:02x}");
             let mut driver = lcd_driver::Hd44780::new(bus, addr, cols, rows)?;
             load_bar_glyphs(&mut driver)?;
-            return Ok(Self { cols, rows, driver, addr });
+            return Ok(Self {
+                cols,
+                rows,
+                driver,
+                addr,
+            });
         }
 
         #[cfg(not(target_os = "linux"))]
         {
             let _ = pcf_addr;
-            Ok(Self { cols, rows })
+            Ok(Self {
+                cols,
+                rows,
+                last_lines: (String::new(), String::new()),
+                backlight_on: true,
+                blink_on: false,
+                clears: 0,
+            })
         }
     }
 
@@ -59,6 +79,8 @@ impl Lcd {
         }
         #[cfg(not(target_os = "linux"))]
         {
+            self.clears += 1;
+            self.last_lines = (String::new(), String::new());
             Ok(())
         }
     }
@@ -74,7 +96,7 @@ impl Lcd {
         }
         #[cfg(not(target_os = "linux"))]
         {
-            let _ = on;
+            self.backlight_on = on;
             Ok(())
         }
     }
@@ -90,7 +112,7 @@ impl Lcd {
         }
         #[cfg(not(target_os = "linux"))]
         {
-            let _ = on;
+            self.blink_on = on;
             Ok(())
         }
     }
@@ -103,10 +125,7 @@ impl Lcd {
             )));
         }
 
-        let trimmed = content
-            .chars()
-            .take(self.cols as usize)
-            .collect::<String>();
+        let trimmed = content.chars().take(self.cols as usize).collect::<String>();
 
         #[cfg(target_os = "linux")]
         {
@@ -115,7 +134,11 @@ impl Lcd {
 
         #[cfg(not(target_os = "linux"))]
         {
-            let _ = trimmed;
+            if row == 0 {
+                self.last_lines.0 = trimmed;
+            } else if row == 1 {
+                self.last_lines.1 = trimmed;
+            }
             Ok(())
         }
     }
@@ -133,37 +156,55 @@ impl Lcd {
     pub fn rows(&self) -> u8 {
         self.rows
     }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn last_lines(&self) -> (String, String) {
+        self.last_lines.clone()
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn last_backlight(&self) -> bool {
+        self.backlight_on
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn last_blink(&self) -> bool {
+        self.blink_on
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn clear_count(&self) -> usize {
+        self.clears
+    }
 }
 
 #[cfg(target_os = "linux")]
 fn load_bar_glyphs<B: lcd_driver::I2cBus>(driver: &mut lcd_driver::Hd44780<B>) -> Result<()> {
     // 0-5: progressive bar fill (0 empty -> 5 full), 6: heartbeat, 7: battery
     let glyphs = [
-        ["00000", "00000", "00000", "00000", "00000", "00000", "00000", "00000"], // empty
-        ["10000", "10000", "10000", "10000", "10000", "10000", "10000", "10000"], // 20%
-        ["11000", "11000", "11000", "11000", "11000", "11000", "11000", "11000"], // 40%
-        ["11100", "11100", "11100", "11100", "11100", "11100", "11100", "11100"], // 60%
-        ["11110", "11110", "11110", "11110", "11110", "11110", "11110", "11110"], // 80%
-        ["11111", "11111", "11111", "11111", "11111", "11111", "11111", "11111"], // 100%
         [
-            "01010",
-            "11111",
-            "11111",
-            "11111",
-            "01110",
-            "00100",
-            "00000",
-            "00000",
+            "00000", "00000", "00000", "00000", "00000", "00000", "00000", "00000",
+        ], // empty
+        [
+            "10000", "10000", "10000", "10000", "10000", "10000", "10000", "10000",
+        ], // 20%
+        [
+            "11000", "11000", "11000", "11000", "11000", "11000", "11000", "11000",
+        ], // 40%
+        [
+            "11100", "11100", "11100", "11100", "11100", "11100", "11100", "11100",
+        ], // 60%
+        [
+            "11110", "11110", "11110", "11110", "11110", "11110", "11110", "11110",
+        ], // 80%
+        [
+            "11111", "11111", "11111", "11111", "11111", "11111", "11111", "11111",
+        ], // 100%
+        [
+            "01010", "11111", "11111", "11111", "01110", "00100", "00000", "00000",
         ], // heartbeat
         [
-            "11111",
-            "11111",
-            "10001",
-            "10001",
-            "10001",
-            "10001",
-            "11111",
-            "11111",
+            "11111", "11111", "10001", "10001", "10001", "10001", "11111", "11111",
         ], // battery
     ];
     driver.load_custom_bitmaps(&glyphs)?;

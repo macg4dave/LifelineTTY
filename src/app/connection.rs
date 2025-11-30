@@ -11,15 +11,15 @@ pub(crate) fn attempt_serial_connect(
     match SerialPort::connect(device, baud) {
         Ok(mut serial_connection) => {
             if let Err(err) = serial_connection.send_command_line("INIT") {
-                logger.log(format!("serial init failed: {err}; will retry"));
+                logger.warn(format!("serial init failed: {err}; will retry"));
                 None
             } else {
-                logger.log("serial connected".into());
+                logger.info("serial connected");
                 Some(serial_connection)
             }
         }
         Err(err) => {
-            logger.log(format!("serial connect failed: {err}; will retry"));
+            logger.warn(format!("serial connect failed: {err}; will retry"));
             None
         }
     }

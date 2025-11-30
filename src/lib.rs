@@ -1,14 +1,14 @@
 pub mod app;
 pub mod cli;
 pub mod config;
+pub mod display;
 pub mod lcd;
 pub mod lcd_driver;
-pub mod display;
 pub mod payload;
-pub mod state;
 pub mod serial;
 #[cfg(feature = "async-serial")]
 pub mod serial_async;
+pub mod state;
 
 pub type Result<T> = std::result::Result<T, Error>;
 

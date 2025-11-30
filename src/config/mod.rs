@@ -105,7 +105,11 @@ fn format_pcf_addr(addr: &Pcf8574Addr) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     fn temp_home(name: &str) -> PathBuf {
         let stamp = SystemTime::now()

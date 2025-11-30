@@ -15,7 +15,7 @@ ARMV7_DOCKERFILE := docker/Dockerfile.armv7
 ARM64_DOCKER_IMAGE := seriallcd:arm64
 ARM64_DOCKERFILE := docker/Dockerfile.arm64
 
-.PHONY: all x86 armv6 armv7 arm64 test clean
+.PHONY: all x86 armv6 armv7 arm64 test lint clean
 
 # Build all targets: native + Raspberry Pi variants.
 all: x86 armv6 armv7 arm64
@@ -28,6 +28,10 @@ x86:
 
 test:
 	cargo test
+
+lint:
+	cargo fmt --all
+	cargo clippy --all-targets -- -D warnings
 
 # ARMv6 (Pi 1/Zero) release via Docker cross-build.
 armv6:

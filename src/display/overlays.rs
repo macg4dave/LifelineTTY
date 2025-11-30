@@ -1,8 +1,8 @@
-use std::time::Instant;
 use std::time::Duration;
+use std::time::Instant;
 
 use crate::{
-    display::lcd::{Lcd, BAR_LEVELS, HEARTBEAT_CHAR, BATTERY_CHAR},
+    display::lcd::{Lcd, BAR_LEVELS, BATTERY_CHAR, HEARTBEAT_CHAR},
     payload::{Icon, RenderFrame},
     Error, Result,
 };
@@ -97,10 +97,7 @@ pub fn advance_offset(text: &str, width: usize, current: usize) -> usize {
 
 pub fn render_parse_error(lcd: &mut Lcd, cols: u8, err: &Error) -> Result<()> {
     let width = cols as usize;
-    let mut msg = format!("{err}");
-    if msg.chars().count() > width {
-        msg = msg.chars().take(width).collect();
-    }
+    let msg = truncate_with_ellipsis(&format!("{err}"), width);
     lcd.set_backlight(true)?;
     lcd.set_blink(true)?;
     lcd.write_line(0, "ERR PARSE")?;
@@ -111,13 +108,22 @@ pub fn render_parse_error(lcd: &mut Lcd, cols: u8, err: &Error) -> Result<()> {
 pub fn render_reconnecting(lcd: &mut Lcd, cols: u8) -> Result<()> {
     let width = cols as usize;
     let title: String = "RECONNECTING".chars().take(width).collect();
-    let mut detail = "retrying...".to_string();
-    if detail.chars().count() > width {
-        detail = detail.chars().take(width).collect();
-    }
+    let detail = truncate_to_width("retrying...", width);
     lcd.clear()?;
     lcd.set_backlight(true)?;
     lcd.set_blink(false)?;
+    lcd.write_line(0, &title)?;
+    lcd.write_line(1, &detail)?;
+    Ok(())
+}
+
+pub fn render_offline_message(lcd: &mut Lcd, cols: u8) -> Result<()> {
+    let width = cols as usize;
+    let title: String = truncate_to_width("SERIAL OFFLINE", width);
+    let detail = truncate_to_width("will retry...", width);
+    lcd.clear()?;
+    lcd.set_backlight(true)?;
+    lcd.set_blink(true)?;
     lcd.write_line(0, &title)?;
     lcd.write_line(1, &detail)?;
     Ok(())
@@ -155,12 +161,7 @@ fn view_with_scroll(text: &str, width: usize, offset: usize) -> String {
     } else {
         offset % cycle.len()
     };
-    cycle
-        .iter()
-        .cycle()
-        .skip(start)
-        .take(width)
-        .collect()
+    cycle.iter().cycle().skip(start).take(width).collect()
 }
 
 fn truncate_to_width(text: &str, width: usize) -> String {
@@ -171,7 +172,19 @@ fn view_line(text: &str, width: usize, offset: usize, scroll_enabled: bool) -> S
     if scroll_enabled {
         return view_with_scroll(text, width, offset);
     }
-    truncate_to_width(text, width)
+    truncate_with_ellipsis(text, width)
+}
+
+fn truncate_with_ellipsis(text: &str, width: usize) -> String {
+    if text.chars().count() <= width {
+        return text.to_string();
+    }
+    if width <= 3 {
+        return truncate_to_width(text, width);
+    }
+    let mut s: String = text.chars().take(width - 3).collect();
+    s.push_str("...");
+    s
 }
 
 fn overlay_heartbeat(text: &mut String, width: usize) {
@@ -230,8 +243,7 @@ mod tests {
 
         let start = view_with_scroll(text, width, 0);
         let before_gap = view_with_scroll(text, width, len - 1);
-        let after_gap =
-            view_with_scroll(text, width, len + SCROLL_GAP.chars().count() + len);
+        let after_gap = view_with_scroll(text, width, len + SCROLL_GAP.chars().count() + len);
 
         assert_ne!(before_gap, start, "should advance before wrap");
         assert_eq!(after_gap, start, "should wrap around after gap");
@@ -243,6 +255,16 @@ mod tests {
         let width = 5;
         let offset = text.chars().count() + SCROLL_GAP.chars().position(|c| c == '|').unwrap_or(0);
         let view = view_with_scroll(text, width, offset);
-        assert!(view.contains('|'), "gap marker '|' should appear during scroll");
+        assert!(
+            view.contains('|'),
+            "gap marker '|' should appear during scroll"
+        );
+    }
+
+    #[test]
+    fn view_line_truncates_with_ellipsis_when_scroll_disabled() {
+        let text = "THIS STRING IS LONG";
+        let view = view_line(text, 6, 0, false);
+        assert_eq!(view, "THI...");
     }
 }

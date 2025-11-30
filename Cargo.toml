@@ -24,3 +24,27 @@ ctrlc = "3"
 [target.'cfg(target_os = "linux")'.dependencies]
 rppal = { version = "0.22.1", features = ["hal"] }
 linux-embedded-hal = "0.4.1"
+
+[package.metadata.deb]
+maintainer = "SerialLCD Maintainers <maintainers@example.invalid>"
+depends = "libudev1, systemd"
+assets = [
+    ["target/release/seriallcd", "/usr/bin/seriallcd", "755"],
+    ["seriallcd.service", "/lib/systemd/system/seriallcd.service", "644"],
+    ["README.md", "/usr/share/doc/seriallcd/README.md", "644"],
+]
+maintainer-scripts = "packaging/deb"
+
+[package.metadata.generate-rpm]
+requires = ["systemd"]
+assets = [
+    { source = "target/release/seriallcd", dest = "/usr/bin/seriallcd", mode = "755" },
+    { source = "seriallcd.service", dest = "/usr/lib/systemd/system/seriallcd.service", mode = "644" },
+    { source = "README.md", dest = "/usr/share/doc/seriallcd/README.md", mode = "644" },
+]
+post_install_script = """
+systemctl daemon-reload >/dev/null 2>&1 || true
+"""
+post_uninstall_script = """
+systemctl daemon-reload >/dev/null 2>&1 || true
+"""

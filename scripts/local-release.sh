@@ -6,15 +6,19 @@ usage() {
 Build release artifacts locally (binary + .deb + .rpm) and optionally upload them to
 GitHub Releases. The version is read from Cargo.toml; tag defaults to "v<version>".
 
-Usage: scripts/local-release.sh [--target <triple>] [--tag <git-tag>] [--upload]
+Usage: scripts/local-release.sh [--target <triple>] [--targets <t1,t2>] [--all-targets] [--tag <git-tag>] [--upload|--all]
 
-  --target <triple>   Optional Rust target triple (default: host). Example:
+  --target <triple>   Optional Rust target triple (can be repeated). Example:
                       armv7-unknown-linux-gnueabihf
+  --targets <list>    Comma-separated list of target triples (overrides --target)
+  --all-targets       Build for host + armv6 + armv7 + arm64 (predefined list)
   --tag <git-tag>     Override release tag (default: v<Cargo version>)
   --upload            Push artifacts to GitHub Releases using the GitHub CLI.
+  --all               Convenience: build + package + upload (same as passing --upload).
   -h, --help          Show this message.
 
 Prereqs: cargo, cargo-deb, cargo-generate-rpm, python3, and optionally the gh CLI.
+For cross builds via Docker, you also need Docker BuildKit/buildx.
 EOF
 }
 
@@ -26,19 +30,60 @@ require_cmd() {
 }
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TARGET_TRIPLE=""
+TARGETS=()
 TAG_OVERRIDE=""
 UPLOAD=0
+ALL_TARGETS=0
+UPLOAD_ASSETS=()
+ALL_TARGETS_DEFAULT=("" "arm-unknown-linux-musleabihf" "armv7-unknown-linux-gnueabihf" "aarch64-unknown-linux-gnu")
+
+derive_arch_label() {
+    local triple="${1:-}"
+    if [[ -n "${triple}" ]]; then
+        case "${triple}" in
+            *armv6*) echo "armv6" ;;
+            *armv7*) echo "armv7" ;;
+            *aarch64*|*arm64*) echo "arm64" ;;
+            *x86_64*|*amd64*) echo "x86_64" ;;
+            *i686*|*i386*) echo "x86" ;;
+            *) echo "${triple}" ;;
+        esac
+        return
+    fi
+
+    local uname_arch
+    uname_arch="$(uname -m)"
+    case "${uname_arch}" in
+        armv6*) echo "armv6" ;;
+        armv7*) echo "armv7" ;;
+        aarch64|arm64) echo "arm64" ;;
+        x86_64|amd64) echo "x86_64" ;;
+        i686|i386) echo "x86" ;;
+        *) echo "${uname_arch}" ;;
+    esac
+}
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --target)
-            TARGET_TRIPLE="${2:-}"
+            TARGETS+=("${2:-}")
             shift 2
+            ;;
+        --targets)
+            IFS=',' read -r -a TARGETS <<< "${2:-}"
+            shift 2
+            ;;
+        --all-targets)
+            ALL_TARGETS=1
+            shift
             ;;
         --tag)
             TAG_OVERRIDE="${2:-}"
             shift 2
+            ;;
+        --all)
+            UPLOAD=1
+            shift
             ;;
         --upload)
             UPLOAD=1
@@ -63,7 +108,7 @@ require_cmd python3
 
 CRATE_VERSION="$(
     cargo metadata --no-deps --format-version 1 |
-        python3 - <<'PY'
+        python3 -c '
 import json, sys
 meta = json.load(sys.stdin)
 for pkg in meta.get("packages", []):
@@ -72,8 +117,16 @@ for pkg in meta.get("packages", []):
         sys.exit(0)
 print("Failed to find seriallcd in cargo metadata", file=sys.stderr)
 sys.exit(1)
-PY
+'
 )"
+
+if [[ "${ALL_TARGETS}" -eq 1 ]]; then
+    TARGETS=("${ALL_TARGETS_DEFAULT[@]}")
+fi
+
+if [[ "${#TARGETS[@]}" -eq 0 ]]; then
+    TARGETS=("")
+fi
 
 if [[ -z "${CRATE_VERSION}" ]]; then
     echo "Could not determine crate version" >&2
@@ -82,59 +135,131 @@ fi
 
 RELEASE_TAG="${TAG_OVERRIDE:-v${CRATE_VERSION}}"
 
-target_dir="target"
-build_args=(--release)
-deb_args=(--no-build)
-rpm_args=()
-arch_label="$(uname -m)"
+package_artifacts() {
+    local triple="$1"
+    local arch_label="$2"
+    local target_dir="$3"
+    local deb_args_str="$4"
+    local rpm_args_str="$5"
 
-if [[ -n "${TARGET_TRIPLE}" ]]; then
-    build_args+=(--target "${TARGET_TRIPLE}")
-    deb_args+=(--target "${TARGET_TRIPLE}")
-    rpm_args+=(--target "${TARGET_TRIPLE}")
-    target_dir="target/${TARGET_TRIPLE}"
-    arch_label="${TARGET_TRIPLE}"
-fi
+    local BIN_PATH="${ROOT}/${target_dir}/release/seriallcd"
+    local DEB_DIR="${ROOT}/${target_dir}/debian"
+    local RPM_DIR="${ROOT}/${target_dir}/generate-rpm"
 
-echo "Building seriallcd ${CRATE_VERSION} (${arch_label})..."
-cargo build "${build_args[@]}"
-cargo deb "${deb_args[@]}"
-cargo generate-rpm "${rpm_args[@]}"
+    IFS=' ' read -r -a deb_args <<< "${deb_args_str}"
+    IFS=' ' read -r -a rpm_args <<< "${rpm_args_str}"
 
-BIN_PATH="${ROOT}/${target_dir}/release/seriallcd"
-DEB_DIR="${ROOT}/${target_dir}/debian"
-RPM_DIR="${ROOT}/${target_dir}/generate-rpm"
+    if [[ ! -f "${BIN_PATH}" ]]; then
+        echo "Binary not found at ${BIN_PATH}" >&2
+        exit 1
+    fi
 
-if [[ ! -f "${BIN_PATH}" ]]; then
-    echo "Binary not found at ${BIN_PATH}" >&2
-    exit 1
-fi
+    cargo deb "${deb_args[@]}"
+    cargo generate-rpm "${rpm_args[@]}"
 
-DEB_PATH="$(ls -t "${DEB_DIR}"/seriallcd_*.deb 2>/dev/null | head -n 1 || true)"
-RPM_PATH="$(ls -t "${RPM_DIR}"/seriallcd-*.rpm 2>/dev/null | head -n 1 || true)"
+    local DEB_PATH
+    local RPM_PATH
+    DEB_PATH="$(ls -t "${DEB_DIR}"/seriallcd_*.deb 2>/dev/null | head -n 1 || true)"
+    RPM_PATH="$(ls -t "${RPM_DIR}"/seriallcd-*.rpm 2>/dev/null | head -n 1 || true)"
 
-if [[ -z "${DEB_PATH}" ]]; then
-    echo "No .deb artifact found in ${DEB_DIR}" >&2
-    exit 1
-fi
+    if [[ -z "${DEB_PATH}" ]]; then
+        echo "No .deb artifact found in ${DEB_DIR}" >&2
+        exit 1
+    fi
 
-if [[ -z "${RPM_PATH}" ]]; then
-    echo "No .rpm artifact found in ${RPM_DIR}" >&2
-    exit 1
-fi
+    if [[ -z "${RPM_PATH}" ]]; then
+        echo "No .rpm artifact found in ${RPM_DIR}" >&2
+        exit 1
+    fi
+
+    local BIN_OUT="${OUT_DIR}/seriallcd_v${CRATE_VERSION}_${arch_label}"
+    local DEB_OUT="${OUT_DIR}/seriallcd_v${CRATE_VERSION}_${arch_label}.deb"
+    local RPM_OUT="${OUT_DIR}/seriallcd_v${CRATE_VERSION}_${arch_label}.rpm"
+
+    cp "${BIN_PATH}" "${BIN_OUT}"
+    cp "${DEB_PATH}" "${DEB_OUT}"
+    cp "${RPM_PATH}" "${RPM_OUT}"
+
+    echo "Artifacts written to ${OUT_DIR}:"
+    echo "  $(basename "${BIN_OUT}")"
+    echo "  $(basename "${DEB_OUT}")"
+    echo "  $(basename "${RPM_OUT}")"
+
+    UPLOAD_ASSETS+=("${BIN_OUT}" "${DEB_OUT}" "${RPM_OUT}")
+}
+
+build_with_cargo() {
+    local triple="$1"
+    local arch_label="$2"
+
+    local target_dir="target"
+    local deb_args=(--no-build)
+    local rpm_args=()
+    local build_args=(--release)
+
+    if [[ -n "${triple}" ]]; then
+        if ! rustup target list --installed | grep -qx "${triple}"; then
+            echo "Rust target ${triple} not installed. Install with: rustup target add ${triple}" >&2
+            exit 1
+        fi
+        build_args+=(--target "${triple}")
+        deb_args+=(--target "${triple}")
+        rpm_args+=(--target "${triple}")
+        target_dir="target/${triple}"
+    fi
+
+    echo "Building seriallcd ${CRATE_VERSION} (${arch_label})..."
+    cargo build "${build_args[@]}"
+    package_artifacts "${triple}" "${arch_label}" "${target_dir}" "${deb_args[*]}" "${rpm_args[*]}"
+}
+
+build_with_docker() {
+    local triple="$1"
+    local arch_label="$2"
+    local platform="$3"
+    local dockerfile="$4"
+    local image="$5"
+    local target_dir="target/${triple}"
+    local release_dir="${ROOT}/${target_dir}/release"
+
+    require_cmd docker
+    mkdir -p "${release_dir}"
+
+    echo "Building seriallcd ${CRATE_VERSION} (${arch_label}) via Docker (${platform})..."
+    docker buildx build --platform "${platform}" --load -f "${dockerfile}" -t "${image}" "${ROOT}"
+    cid=$(docker create "${image}")
+    docker cp "${cid}:/usr/local/bin/seriallcd" "${release_dir}/seriallcd"
+    docker rm "${cid}" >/dev/null
+
+    local deb_args=(--no-build --target "${triple}")
+    local rpm_args=(--target "${triple}")
+    package_artifacts "${triple}" "${arch_label}" "${target_dir}" "${deb_args[*]}" "${rpm_args[*]}"
+}
 
 OUT_DIR="${ROOT}/releases/${CRATE_VERSION}"
 mkdir -p "${OUT_DIR}"
 
-BIN_OUT="${OUT_DIR}/seriallcd-${CRATE_VERSION}-${arch_label}"
-cp "${BIN_PATH}" "${BIN_OUT}"
-cp "${DEB_PATH}" "${OUT_DIR}/"
-cp "${RPM_PATH}" "${OUT_DIR}/"
+for TARGET_TRIPLE in "${TARGETS[@]}"; do
+    arch_label="$(derive_arch_label "${TARGET_TRIPLE}")"
 
-echo "Artifacts written to ${OUT_DIR}:"
-echo "  $(basename "${BIN_OUT}")"
-echo "  $(basename "${DEB_PATH}")"
-echo "  $(basename "${RPM_PATH}")"
+    case "${TARGET_TRIPLE}" in
+        "")
+            build_with_cargo "" "${arch_label}"
+            ;;
+        arm-unknown-linux-musleabihf)
+            build_with_docker "${TARGET_TRIPLE}" "${arch_label}" "linux/arm/v6" "docker/Dockerfile.armv6" "seriallcd:armv6"
+            ;;
+        armv7-unknown-linux-gnueabihf)
+            build_with_docker "${TARGET_TRIPLE}" "${arch_label}" "linux/arm/v7" "docker/Dockerfile.armv7" "seriallcd:armv7"
+            ;;
+        aarch64-unknown-linux-gnu)
+            build_with_docker "${TARGET_TRIPLE}" "${arch_label}" "linux/arm64/v8" "docker/Dockerfile.arm64" "seriallcd:arm64"
+            ;;
+        *)
+            build_with_cargo "${TARGET_TRIPLE}" "${arch_label}"
+            ;;
+    esac
+done
 
 if [[ "${UPLOAD}" -eq 1 ]]; then
     require_cmd gh
@@ -145,7 +270,11 @@ if [[ "${UPLOAD}" -eq 1 ]]; then
     fi
 
     echo "Uploading assets to GitHub release ${RELEASE_TAG}..."
-    gh release create "${RELEASE_TAG}" "${OUT_DIR}"/* \
-        --title "seriallcd ${CRATE_VERSION}" \
-        --notes "Local release build for seriallcd ${CRATE_VERSION}"
+    if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+        gh release upload "${RELEASE_TAG}" "${UPLOAD_ASSETS[@]}" --clobber
+    else
+        gh release create "${RELEASE_TAG}" "${UPLOAD_ASSETS[@]}" \
+            --title "seriallcd ${CRATE_VERSION}" \
+            --notes "Local release build for seriallcd ${CRATE_VERSION}"
+    fi
 fi

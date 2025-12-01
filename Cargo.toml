@@ -1,9 +1,9 @@
 [package]
-name = "seriallcd"
+name = "lifelinetty"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-description = "Serial-to-LCD daemon for Raspberry Pi / PiKVM targets (skeleton)."
+description = "LifelineTTY: serial terminal lifeline daemon and client for Raspberry Pi / PiKVM targets."
 repository = ""
 
 [features]
@@ -29,17 +29,17 @@ linux-embedded-hal = "0.4.1"
 maintainer = "David <macg4dave@gmail.com>"
 depends = "libudev1, systemd"
 assets = [
-    ["target/release/seriallcd", "/usr/bin/seriallcd", "755"],
-    ["seriallcd.service", "/lib/systemd/system/seriallcd.service", "644"],
-    ["README.md", "/usr/share/doc/seriallcd/README.md", "644"],
+    ["target/release/lifelinetty", "/usr/bin/lifelinetty", "755"],
+    ["lifelinetty.service", "/lib/systemd/system/lifelinetty.service", "644"],
+    ["README.md", "/usr/share/doc/lifelinetty/README.md", "644"],
 ]
 maintainer-scripts = "packaging/deb"
 
 [package.metadata.generate-rpm]
 assets = [
-    { source = "target/release/seriallcd", dest = "/usr/bin/seriallcd", mode = "755" },
-    { source = "seriallcd.service", dest = "/usr/lib/systemd/system/seriallcd.service", mode = "644" },
-    { source = "README.md", dest = "/usr/share/doc/seriallcd/README.md", mode = "644" },
+    { source = "target/release/lifelinetty", dest = "/usr/bin/lifelinetty", mode = "755" },
+    { source = "lifelinetty.service", dest = "/usr/lib/systemd/system/lifelinetty.service", mode = "644" },
+    { source = "README.md", dest = "/usr/share/doc/lifelinetty/README.md", mode = "644" },
 ]
 post_install_script = """
 systemctl daemon-reload >/dev/null 2>&1 || true

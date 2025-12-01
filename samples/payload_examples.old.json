@@ -1,0 +1,58 @@
+{
+  "examples": [
+    {
+      "description": "Basic dashboard showing uptime and CPU% on line 1, a bar on line 2.",
+      "payload": {
+        "line1": "Up 12:34  CPU 42%",
+        "line2": "",
+        "bar": 42,
+        "mode": "dashboard"
+      }
+    },
+    {
+      "description": "Alert with blinking backlight; expires after 5 seconds.",
+      "payload": {
+        "line1": "ALERT: Temp",
+        "line2": "85C",
+        "blink": true,
+        "duration_ms": 5000
+      }
+    },
+    {
+      "description": "Paged streaming: hint to advance automatically after 4 seconds.",
+      "payload": {
+        "line1": "Page 1: Stats",
+        "line2": "More info...",
+        "page_timeout_ms": 4000
+      }
+    },
+    {
+      "description": "Scrollable banner for long text on line 1.",
+      "payload": {
+        "line1": "This message is too long to fit so it scrolls across the top line",
+        "line2": "",
+        "scroll_speed_ms": 250
+      }
+    },
+    {
+      "description": "Custom icons embedded via placeholders {0xNN} and manual bar label.",
+      "payload": {
+        "line1": "NET {0x00} 12.3Mbps",
+        "line2": "",
+        "bar_value": 650,
+        "bar_max": 1000,
+        "bar_label": "NET", 
+        "icons": [0]
+      }
+    },
+    {
+      "description": "Test pattern to verify wiring; clears display first.",
+      "payload": {
+        "clear": true,
+        "test": true,
+        "line1": "TEST PATTERN",
+        "line2": "Backlight ON"
+      }
+    }
+  ]
+}

@@ -11,18 +11,19 @@ fn temp_home() -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .expect("time went backwards")
         .as_micros();
-    dir.push(format!("seriallcd_test_home_{stamp}"));
+    dir.push(format!("lifelinetty_test_home_{stamp}"));
     dir
 }
 
 fn run_with_home(args: &[&str]) -> std::process::Output {
     let home = temp_home();
     fs::create_dir_all(&home).expect("failed to create temp HOME");
-    let output = Command::new(env!("CARGO_BIN_EXE_seriallcd"))
+    let bin = env::var("CARGO_BIN_EXE_lifelinetty").expect("CARGO_BIN_EXE_lifelinetty not set");
+    let output = Command::new(bin)
         .args(args)
         .env("HOME", &home)
         .output()
-        .expect("failed to run seriallcd");
+        .expect("failed to run lifelinetty");
     let _ = fs::remove_dir_all(&home);
     output
 }

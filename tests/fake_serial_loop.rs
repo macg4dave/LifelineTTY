@@ -1,4 +1,4 @@
-use seriallcd::{
+use lifelinetty::{
     config::DEFAULT_PCF8574_ADDR,
     display::overlays::{render_frame_with_scroll, render_offline_message, render_parse_error},
     lcd::Lcd,
@@ -10,8 +10,8 @@ use seriallcd::{
 
 fn defaults() -> Defaults {
     Defaults {
-        scroll_speed_ms: seriallcd::payload::DEFAULT_SCROLL_MS,
-        page_timeout_ms: seriallcd::payload::DEFAULT_PAGE_TIMEOUT_MS,
+        scroll_speed_ms: lifelinetty::payload::DEFAULT_SCROLL_MS,
+        page_timeout_ms: lifelinetty::payload::DEFAULT_PAGE_TIMEOUT_MS,
     }
 }
 

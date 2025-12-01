@@ -1,8 +1,8 @@
-# SerialLCD — A Powerful, Drop‑In Display Engine for Raspberry Pi & Linux
+# LifelineTTY (formerly SerialLCD) — A Powerful, Drop‑In Display Engine for Raspberry Pi & Linux
 
-SerialLCD turns any **HD44780‑compatible character LCD** (16×2, 20×4, 16×4, 40×20 into a **smart, JSON‑driven dashboard** for your Raspberry Pi or Linux device.
+LifelineTTY (previously called SerialLCD) turns any **HD44780‑compatible character LCD** (16×2, 20×4, 16×4, 40×20 into a **smart, JSON‑driven dashboard** for your Raspberry Pi or Linux device.
 
-If you want a **clean, easy way to show system stats, alerts, KVM info, network activity, or anything else** on a LCD screen — SerialLCD does all the hard work for you.
+If you want a **clean, easy way to show system stats, alerts, KVM info, network activity, or anything else** on a LCD screen — LifelineTTY does all the hard work for you.
 
 **No I²C code. No screen‑handling logic. Just send JSON → the display updates.**
 
@@ -10,7 +10,7 @@ It’s compact, robust, beginner‑friendly, and powerful enough for advanced se
 
 ---
 
-## What SerialLCD Gives You (Why It's Special)
+## What LifelineTTY Gives You (Why It's Special)
 
 - **True plug‑and‑play** LCD support  
   Works with *any* HD44780 LCD using a PCF8574 I²C backpack — the most common type used by Pi and Arduino hobbyists.
@@ -49,8 +49,8 @@ These steps get you running fast.
 ### Pi OS (Pi 1/Zero/2/3/4/5) — Easy `.deb` install
 
 ```sh
-wget https://github.com/macg4dave/My_Pi_KVM_LCD_Serial/releases/latest/download/seriallcd_arm.deb
-sudo apt install ./seriallcd_arm.deb
+wget https://github.com/macg4dave/LifelineTTY/releases/latest/download/lifelinetty_arm.deb
+sudo apt install ./lifelinetty_arm.deb
 ```
 
 Works on:
@@ -97,7 +97,7 @@ sudo raspi-config
 Just run:
 
 ```sh
-seriallcd --demo
+lifelinetty --demo
 ```
 
 You’ll see:
@@ -117,7 +117,7 @@ If you see animations, your wiring is perfect.
 
 # Sending JSON (This is the real magic)
 
-SerialLCD listens for **one JSON object per line** over a serial port.
+LifelineTTY listens for **one JSON object per line** over a serial port.
 
 Examples:
 
@@ -164,7 +164,7 @@ Soon there will be a small companion tool that:
 - sends system metrics  
 - gives a GUI + CLI interface  
 
-**(TODO: seriallcd‑send — placeholder section)**
+**(TODO: lifelinetty‑send — placeholder section)**
 
 ---
 
@@ -202,10 +202,10 @@ Reload config without restarting the daemon:
 Install as a service:
 
 ```sh
-sudo install -m 0755 /usr/local/bin/seriallcd /usr/local/bin/seriallcd
-sudo install -m 0644 seriallcd.service /etc/systemd/system/seriallcd.service
+sudo install -m 0755 /usr/local/bin/lifelinetty /usr/local/bin/lifelinetty
+sudo install -m 0644 lifelinetty.service /etc/systemd/system/lifelinetty.service
 sudo systemctl daemon-reload
-sudo systemctl enable --now seriallcd.service
+sudo systemctl enable --now lifelinetty.service
 ```
 
 Gives you:
@@ -284,7 +284,7 @@ docker buildx build   --platform linux/arm/v6   -f docker/Dockerfile.armv6 .
 
 ### Repo  
 
-<https://github.com/macg4dave/My_Pi_KVM_LCD_Serial>
+<https://github.com/macg4dave/LifelineTTY>
 
 ### Architecture docs  
 
@@ -298,7 +298,7 @@ See `docs/releasing.md` for `.deb`, `.rpm`, and multi‑arch builds.
 
 # Summary
 
-SerialLCD gives you a **professional-quality LCD dashboard** with:
+LifelineTTY gives you a **professional-quality LCD dashboard** with:
 
 - JSON-driven rendering  
 - Powerful display modes  
@@ -311,4 +311,10 @@ It’s one of the easiest ways to add a live display to a Raspberry Pi project �
 
 ---
 
-Enjoy the project — and watch for the companion **seriallcd‑send** tool coming soon!
+Enjoy the project — and watch for the companion **lifelinetty‑send** tool coming soon!
+
+---
+
+## Legacy name: SerialLCD
+
+This project was originally called **SerialLCD**. The last release under that name is tagged as `seriallcd-v1.0.0`. Behaviour remains compatible; only the binary and project branding have changed.

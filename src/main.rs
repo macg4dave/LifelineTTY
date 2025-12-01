@@ -1,4 +1,4 @@
-use seriallcd::{app::App, cli::Command, Result};
+use lifelinetty::{app::App, cli::Command, Result};
 
 fn main() {
     if let Err(err) = try_main() {

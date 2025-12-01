@@ -1,4 +1,4 @@
-use seriallcd::{
+use lifelinetty::{
     lcd::Lcd,
     payload::{Defaults, DEFAULT_PAGE_TIMEOUT_MS, DEFAULT_SCROLL_MS},
     state::RenderState,
@@ -19,6 +19,6 @@ fn integration_parses_and_states() {
 
 #[test]
 fn smoke_lcd_write_lines_stub() {
-    let mut lcd = Lcd::new(16, 2, seriallcd::config::DEFAULT_PCF8574_ADDR).unwrap();
+    let mut lcd = Lcd::new(16, 2, lifelinetty::config::DEFAULT_PCF8574_ADDR).unwrap();
     lcd.write_lines("HELLO", "WORLD").unwrap();
 }

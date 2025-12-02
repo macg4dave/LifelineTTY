@@ -2,6 +2,7 @@ use crate::{Error, Result};
 use std::path::Path;
 
 pub mod loader;
+pub mod profiles;
 
 pub const DEFAULT_DEVICE: &str = "/dev/ttyUSB0";
 pub const DEFAULT_BAUD: u32 = 9_600;

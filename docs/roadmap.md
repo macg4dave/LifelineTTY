@@ -22,6 +22,8 @@ LifelineTTY is the successor to SerialLCD: a single Rust daemon for Raspberry Pi
 
 Note: A set of minimal roadmap skeleton modules has been added to the repository to help iterate on Milestones quickly. See `docs/roadmap_skeletons.md` for the layout and next steps.
 
+There is also a short frameworks document that describes the set of skeleton modules and next steps: `docs/roadmap_frameworks.md`.
+
 > _Only after B1–B6 are closed should we land anything from the P1–P20 queue or milestone features below._
 
 ## Priority queue (P1–P20)
@@ -44,7 +46,7 @@ Note: A set of minimal roadmap skeleton modules has been added to the repository
 | **P15** | **Heartbeat + watchdog**: implement mutual heartbeat packets and fail-safe hooks to re-run LCD “offline” screen or trigger local script (within charter: no extra daemons). |
 | **P16** | **CLI tunneling UX polish**: history, prompt, exit codes surfaced nicely in `--test-serial` mode without breaking automation. |
 | **P17** | **Remote file integrity tooling**: CLI helper to verify checksums and list staged chunks in `/run/serial_lcd_cache`. |
-| **P18** | **Config-driven polling profiles**: allow `profiles` table in `config.toml` to customize polling intervals per metric, validated via tests. ||
+| **P18** | **Config-driven polling profiles**: allow `profiles` table in `config.toml` to customize polling intervals per metric, validated via tests. |
 | **P19** | **Documentation + sample payload refresh**: update `README.md`, `samples/payload_examples*.json`, and `docs/lcd_patterns.md` showing new modes and tunnels. |
 
 ## Crate guidance for roadmap alignment

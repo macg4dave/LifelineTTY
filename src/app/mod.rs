@@ -17,10 +17,12 @@ mod file_transfer;
 mod input;
 mod lifecycle;
 mod logger;
+mod negotiation;
 mod polling;
 mod render_loop;
 #[cfg(feature = "serialsh")]
 pub mod serial_shell;
+mod telemetry;
 mod tunnel;
 mod watchdog;
 

@@ -1,135 +1,74 @@
-# Project — Codex/Copilot Charter
-Purpose: keep this AI-only Rust project on-scope. All decisions below are final; do not invent extra features.
+# LifelineTTY Copilot Charter
+Purpose: keep every AI-assisted change aligned with the Dec 2025 roadmap in `docs/roadmap.md`. All guidance here is binding—stay within scope, finish the blockers first, and move through priorities only when explicitly scheduled.
 
 ## One-line mission
-A minimal, ultra-light Rust daemon for a Raspberry Pi 1 that reads structured data over UART and displays formatted status text on a 16×2 I²C LCD with absolute reliability and minimal resource usage.
+Ship a single, ultra-light Rust daemon for Raspberry Pi 1 (ARMv6) that reads newline-delimited JSON (and key=value fallbacks) from `/dev/ttyUSB0` at 9600 baud, renders two HD44780 LCD lines via a PCF8574 I²C backpack, and runs for months without exceeding 5 MB RSS.
 
-## In-scope MVP (only these outcomes)
-Core user flow 1:
-Read incoming serial data from /dev/ttyAMA0 (115200 8N1), parse newline-terminated JSON or key=value messages, and handle malformed input gracefully.
+## Roadmap alignment (read before coding)
+1. **Blockers (B1–B6)** — rename fallout, charter sync, cache-policy audit, CLI docs/tests, prompt refresh, and release tooling. Nothing else lands until these are closed.
+2. **Priority queue (P1–P20)** — once blockers are done, tackle P1–P4 (rename lint, baud audit, config hardening, LCD regression tests) before touching telemetry, tunnels, or protocol work.
+3. **Milestones (A–G)** — every large feature (command tunnel, negotiation, file push/pull, polling+heartbeat, display expansion, strict JSON+compression, serial shell) builds on specific priorities. Reference the milestone workflows in `docs/roadmap.md` when planning.
+4. Always annotate changes with the roadmap item they advance (e.g., “P3: Config loader hardening”) so we can trace progress.
 
-Core user flow 2:
-Render two lines of text to a 16×2 HD44780 LCD via PCF8574 I²C backpack, refreshing efficiently without flicker and without CPU spikes.
+## Core behavior (never change without approval)
+- **IO**: UART input via `/dev/ttyUSB0` (9600 8N1) by default; config/CLI overrides may point to `/dev/ttyAMA0`, `/dev/ttyS*`, or USB adapters as long as they speak the same framing. LCD output via HD44780 + PCF8574 @ 0x27. No Wi-Fi, Bluetooth, sockets, HTTP, USB HID, or other transports.
+- **CLI**: binary currently invoked as `seriallcd` for compatibility. Supported flags: `--run`, `--test-lcd`, `--test-serial`, `--device`, `--baud`, `--cols`, `--rows`, `--demo`. Do **not** add flags or modes unless the roadmap explicitly calls for it (e.g., future `--serialsh`).
+- **Protocols**: newline-terminated JSON or `key=value` pairs; LCD output is always two 16-character lines. Exit code 0 on success, non-zero on fatal errors.
 
-Core user flow 3:
-Run as a systemd service on boot, with stable long-running behaviour, zero crashes, and tiny RAM footprint (target < 5 MB RSS).
+## Storage + RAM-disk policy (mandatory)
+- Persistent writes are limited to `~/.serial_lcd/config.toml`.
+- Everything else (logs, temp payloads, LCD caches, tunnel buffers) must live under `/run/serial_lcd_cache`.
+- The application must never call `mount`, create tmpfs, require sudo, or write outside the RAM disk.
+- Hard-code `const CACHE_DIR: &str = "/run/serial_lcd_cache";` and treat it as ephemeral (clean up after yourself, expect wipe on reboot).
+- All logging goes to stderr or files inside the RAM disk.
 
-Target platform:
-Raspberry Pi 1 Model A — ARMv6, Debian minimal install, systemd.
-
-Interface:
-CLI only, with these commands:
---test-lcd → write test messages to the LCD
---test-serial → dump raw serial input to stdout
---run → start main daemon loop (reads serial, drives LCD)
-No TUI. No REPL. No HTTP server. No GUI.
-
-IO/protocols:
-Input: UART serial (/dev/ttyAMA0, 115200 baud)
-Output: 16×2 character LCD via I²C (PCF8574, address 0x27)
-No Wi-Fi, no Bluetooth, no sockets, no cloud.
-No USB HID.
-
-Storage/config:
-Only local config files under ~/.serial_lcd/
-Files: config.toml (read/write allowed — this is the only persistent write exception), optional local log (ramdisk only)
-No database.
-No cache.
-No state outside this folder.
-
-## Runtime RAM-disk / cache policy (MANDATORY)
-
-The program must never write to the SD card or persistent storage, **except** the single config file at `~/.serial_lcd/config.toml` on the Raspberry Pi.
-
-All temporary files, logs, and caches must be stored in a RAM-disk
-created and owned by systemd, not by the application.
-
-The application itself must not:
-- call `mount`
-- create tmpfs
-- require sudo/root
-- modify `/etc/fstab`
-- perform any disk I/O outside the approved RAM path
-
-Systemd will provision a private tmpfs at:
-    /run/serial_lcd_cache
-
-This directory will exist at runtime and will be owned by the service user.
-The application may:
-- read/write files inside `/run/serial_lcd_cache`
-- read/write the config file at `~/.serial_lcd/config.toml` (the only persistent exception)
-- assume ~100MB of tmpfs space
-- clean up its own temporary files
-
-The application must not:
-- write anywhere else (persistent writes are only for the config file)
-- attempt to remount or resize the tmpfs
-- assume permanence (all data is wiped on reboot)
-
-All path handling must hard-code the RAM-disk root:
-    const CACHE_DIR: &str = "/run/serial_lcd_cache";
-
-All logging must go to stderr or files inside this RAM-disk only.
-
-No persistent state must ever be created.
-
-## Out of scope (never do these)
-* No new interfaces beyond the one listed above unless explicitly approved.
-* No network calls unless explicitly stated.
-* No speculative features or refactors without a written request.
-
-## Tech and dependencies
-* Language: Rust (stable). Edition: 2021.
-* Allowed crates: std, hd44780-driver, linux-embedded-hal, rppal (I2C), serialport, tokio-serial (feature `async-serial`), tokio (only for async serial), anyhow/thiserror/log/tracing once requested explicitly.
-* Banned crates: anything that pulls in a runtime or network stack unless explicitly requested (no reqwest, hyper, surf, mqtt, websockets, databases).
-* Build/test commands: `cargo build`, `cargo test`; optionally `cargo fmt`, `cargo clippy`.
-* Runtime environment: Raspberry Pi OS on ARMv6 (Pi 1), systemd-managed service user, serial at `/dev/ttyAMA0` (115200 8N1), I2C LCD at address `0x27` via PCF8574.
+## Tech + dependencies
+- **Language**: Rust 2021, `lifelinetty` crate only.
+- **Allowed crates**: std, `hd44780-driver`, `linux-embedded-hal`, `rppal`, `serialport`, `tokio-serial` (feature `async-serial`), `tokio` (only for async serial), `serde`, `serde_json`, `crc32fast`, `ctrlc`, optional `anyhow`, `thiserror`, `log`, `tracing`. New crates require approval.
+- **Banned crates**: anything pulling in a network stack, heavyweight runtime, database, or filesystem abstraction that writes outside allowed paths.
+- **Build/test commands**: `cargo fmt`, `cargo clippy -- -D warnings`, `cargo test`, `cargo build --release` when needed. All must pass on x86_64 **and** ARMv6.
 
 ## Interfaces that must stay stable
-* CLI binary name and flags: `seriallcd --run`, `--test-lcd`, `--test-serial`, plus `--device`, `--baud`, `--cols`, `--rows`. Do not rename without approval.
-* Config/schema/contracts: `~/.serial_lcd/config.toml` (future), serial framing: newline-terminated JSON or `key=value` records; I2C LCD uses HD44780 command set via PCF8574.
-* Outputs: stderr logging only; LCD contents are two-line text; exit codes: 0 on success, non-zero on fatal errors.
+- CLI name + flags (see above) until roadmap explicitly authorizes changeover to `lifelinetty` binary.
+- Config schema at `~/.serial_lcd/config.toml` and payload contracts in `src/payload/`.
+- LCD command set (HD44780) and I²C wiring (PCF8574 @ 0x27).
+- Serial framing: newline JSON / key=value. Keep compatibility layers for legacy SerialLCD senders (see roadmap item P19).
 
-## Quality bar
-* Tests: every behavioral change adds/updates tests; no regressions.
-* Formatting/lints: `rustfmt`; `clippy` must be clean or documented if skipped.
-* Safety: avoid `unsafe`; avoid `unwrap()` outside tests/examples unless justified.
-* Performance/reliability: target <5 MB RSS; avoid busy loops; handle serial/LCD errors with retries and backoff; never crash the daemon loop.
-Write clean, idiomatic Rust.
-All changes must pass `cargo test` on both x86_64 and ARMv6
-all clippy warnings must be resolved
-all public functions/types must have Rustdoc comments.
-all cli flags and config options must be documented in README.md.
-all cli flags must have tests covering their behavior.
-never always deadcode ignore or allow attributes without explicit approval.
+## Quality bar & testing
+- Every behavioral change gets matching tests (unit + integration under `tests/`). All CLI flags must have regression coverage.
+- Run `cargo fmt`, `cargo clippy -- -D warnings`, and the relevant `cargo test` targets before submitting. Include full output in reviews/PRs.
+- Avoid `unsafe` and unchecked `unwrap()` in production code.
+- Maintain <5 MB RSS, no busy loops. Add backoff/retry handling for serial and LCD errors.
+- Document user-facing changes (README, docs/*.md, Rustdoc). Public functions and types require Rustdoc comments.
+- Never silence lints globally (`#[allow(dead_code)]`, etc.) without explicit approval and clear justification.
 
-## Task request template (use for every ask)
+## Task request template (use verbatim)
 Task:
 """
 <One-line summary of the change>
 
 Details:
-- What to change: <short description and acceptance criteria>
+- Roadmap link: <B#/P#/Milestone reference>
+- What to change: <short description + acceptance criteria>
 - Files to consider: <list or leave blank>
 - Tests: <which tests to add/update or leave blank>
-- Constraints / do not modify: <files/behaviors to keep unchanged>
+- Constraints / do not modify: <guardrails>
 """
 
 ## Agent rules (apply to every change)
-- If scope is unclear or conflicts with "Out of scope," ask before coding.
-- Make the smallest change that meets the acceptance criteria.
-- Preserve stable interfaces and outputs unless explicitly allowed to change.
-- Add or update tests for behavior changes and include `cargo test` output.
-- Document user-facing changes (Rustdoc/README) when behavior shifts.
-- No feature creep: do not add capabilities not listed in "In-scope MVP."
+1. If the request conflicts with this charter or the roadmap, clarify before coding.
+2. Make the smallest change that satisfies the acceptance criteria and roadmap intent.
+3. Preserve stable interfaces unless the roadmap explicitly authorizes modifications (and provide migration notes when it does).
+4. Update tests, docs, and roadmap cross-references together in the same PR.
+5. Include `cargo test` output and note any platform-specific considerations (x86_64 vs ARMv6).
+6. Resist feature creep—no speculative refactors or new capabilities beyond the roadmap milestones.
 
-## development machine
-Target platform is Raspberry Pi 1 Model A (ARMv6) BCM2835. Development can occur on an x86_64 Linux or macOS machine using cross-compilation or QEMU emulation docker. Ensure all builds and tests pass on the target ARMv6 architecture before finalizing changes.
+## Development + review environment
+- Target hardware: Raspberry Pi 1 Model A (ARMv6, Debian/systemd). Cross-compile or use QEMU/docker images in `docker/` and `scripts/local-release.sh` for packaging.
+- Services: `lifelinetty.service` / `seriallcd.service` must remain systemd-friendly (no extra daemons). When editing, ensure release artifacts (`packaging/`, Dockerfiles) stay consistent with the rename plan (B6).
 
-## Documentation
-* Document all public functions/types with Rustdoc.
-* Update README.md with any user-facing changes.
-* Maintain an up-to-date roadmap.txt with planned features and TODOs.
-* Keep spec.txt aligned with implemented protocol and behaviors.
-* Include comments in code for complex logic or non-obvious decisions.
-* Ensure all documentation changes are part of the same PR as code changes when relevant.
+## Documentation expectations
+- Keep README, `docs/architecture.md`, `docs/roadmap.md`, `docs/lcd_patterns.md`, and `samples/` payloads synchronized with functionality.
+- When adding protocol/CLI changes, update `spec.txt` (or create it if missing) and annotate roadmap items with the new state.
+- Comment non-obvious state machines (render loop, serial backoff, payload parser) so future contributors can reason about them.
+- All doc updates must ship with their accompanying code changes.

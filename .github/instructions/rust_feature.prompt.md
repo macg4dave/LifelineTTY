@@ -1,21 +1,24 @@
 ---
-name: "Rust Feature Builder"
-description: "Prompt template for adding features or capabilities to a Rust project."
+name: rust_feature
+description: "Prompt template for adding features or capabilities to the LifelineTTY daemon."
 ---
 
 Context
 -------
--- Project: <project_name> (crate `<crate_name>`).
--- Source: <src_directory>. Tests: <tests_directory>.
--- Tooling: `cargo build`, `cargo test`, `cargo fmt`, `cargo clippy`.
+- **Project**: LifelineTTY — a single Rust daemon for Raspberry Pi 1 (ARMv6) that reads newline-delimited JSON from `/dev/ttyUSB0` at 9600 8N1 by default (config/CLI overrides can point at `/dev/ttyAMA0`, `/dev/ttyS0`, USB adapters, etc.) and renders two LCD lines via a PCF8574 I²C backpack.
+- **Crate**: `lifelinetty`. Key modules: `src/cli.rs`, `src/app/`, `src/serial/`, `src/display/`, `src/lcd_driver/`, `src/config/`, plus integration tests under `tests/`.
+- **Tooling**: run `cargo fmt`, `cargo clippy -- -D warnings`, and the requested `cargo test` command (typically `cargo test`). Keep runtime RSS < 5 MB and avoid busy loops.
+- **Storage policy**: only `~/.serial_lcd/config.toml` is persistent; every other write (temp files, logs, file chunks) must live in `/run/serial_lcd_cache`.
+- **CLI stability**: flags stay `--run`, `--test-lcd`, `--test-serial`, `--device`, `--baud`, `--cols`, `--rows`, `--demo`. No new interfaces (no networking, HTTP, sockets) without explicit approval.
+- **Allowed crates**: std, `hd44780-driver`, `linux-embedded-hal`, `rppal`, `serialport`, `tokio-serial` (async feature), `tokio` (only when async serial is required), `serde`, `serde_json`, `crc32fast`, `ctrlc`, optional `anyhow`/`thiserror`, `log`/`tracing`.
 
 Hard constraints
 ----------------
-- Keep the change minimal and scoped to the requested feature.
-- Maintain existing public APIs and CLI outputs unless explicitly allowed to change them.
-- Add or update tests that validate the new behavior.
-- Run `cargo test -p <crate_name>` (or the specified test command) and share the full output.
-- Document user-facing behavior (Rustdoc or README) when it changes.
+1. Implement only the requested feature slice; no new CLI flags or protocols unless the task explicitly asks.
+2. Update README/Rustdoc/config docs for any user-facing change (flags, payload schema, LCD behavior).
+3. Add or refresh tests proving the feature (unit tests, integration under `tests/`, or golden payload fixtures).
+4. Respect storage rules: only `~/.serial_lcd/config.toml` (persistent) and `/run/serial_lcd_cache` (tmp) may be written.
+5. Run the specified `cargo test` command and include the full output after `cargo fmt`/`cargo clippy`.
 
 Prompt template
 ---------------
@@ -33,18 +36,19 @@ Details:
 
 Assistant instructions
 ----------------------
-1. Outline a brief plan (2–3 bullets).
-2. Implement the smallest viable slice of the feature.
-3. Add focused unit/integration tests that prove the feature works.
-4. Update docs or inline Rustdoc for user-facing changes.
-5. Run the specified `cargo test` command; include the full output.
+1. Outline a brief 2–3 bullet plan naming the modules you will touch.
+2. Implement the smallest viable slice of the feature, honoring RAM-disk rules and keeping CLI semantics stable.
+3. Add focused unit/integration tests that prove the behavior (e.g., new payload parsing, LCD overlay changes, config evolution).
+4. Update README/Rustdoc/config docs when users see new behavior.
+5. Run the specified `cargo test` (after `cargo fmt`/`cargo clippy`) and include the full output.
 6. Deliver:
    - Short summary of changes with file paths.
    - Exact patch(es) in `apply_patch` format.
-   - Test output showing passing runs.
-   - Optional next steps (e.g., follow-up polish or docs).
+   - Test output showing passing runs (include failing output if reproduced beforehand).
+   - Optional next steps (e.g., follow-up polish or documentation tasks).
 
 Example prompts
 ---------------
-- "Task: Add `--dry-run` flag to the CLI. Details: the flag should log planned actions without modifying files. Files: `src/main.rs`, `src/cli.rs`. Tests: add unit test for `Args::dry_run` and integration test for log output. Docs: README flag table."
-- "Task: Support JSON output for the `status` subcommand. Details: add serializer, keep text output default. Files: `src/status.rs`, `src/output.rs`. Tests: integration test for JSON schema. Constraints: do not change existing text output format."
+- "Task: Add `display_mode = "panel"` payload handling. Details: mirror current LCD frame onto an auxiliary HD44780 panel. Files: `src/display/overlays.rs`, `src/payload/parser.rs`. Tests: extend `tests/integration_mock.rs::renders_panel_mode`. Docs: README display modes."
+- "Task: Implement `serialsh` feature gate. Details: add CLI flag but keep default disabled, wire stub handler. Files: `src/cli.rs`, `src/app/mod.rs`. Tests: update `tests/bin_smoke.rs` to prove flag parsing. Docs: README CLI table."
+- "Task: Add config-driven polling profile. Details: support `[profiles.default]` in `~/.serial_lcd/config.toml` to control CPU/disk polling intervals. Files: `src/config/loader.rs`, `src/app/render_loop.rs`. Tests: new unit test for profile merging + integration test verifying default."

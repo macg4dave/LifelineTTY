@@ -1,77 +1,58 @@
 ---
-name: "fileZoom Assistant"
-scope: "repository"
-description: "Repository-aware Copilot prompt template for the fileZoom CLI file manager. Use this when asking for code changes, tests, or PR-ready patches."
+name: rust_mc
+description: "Repository-aware Copilot template for multi-file changes inside LifelineTTY."
 ---
 
 Context
 -------
--- Project: fileZoom — a CLI file manager written in Rust (no external deps beyond standard crates).
--- Main code: `app/` (binary + library; crate name `fileZoom`). Tests: `cargo test -p fileZoom` (unit + integration under `app/tests`).
-- Tooling: `cargo build`, `cargo test`, `cargo run`, `rustfmt`, `clippy`.
+- **Project**: LifelineTTY — a tiny Rust daemon for Raspberry Pi 1 (ARMv6) that reads newline-delimited JSON from `/dev/ttyUSB0` (9600 8N1) by default and, via config/CLI overrides, any `/dev/tty*` path (e.g., `/dev/ttyAMA0`, `/dev/ttyS0`) before rendering two LCD lines through a PCF8574 I²C backpack.
+- **Crate**: `lifelinetty`. Major modules: `src/cli.rs`, `src/app/`, `src/serial/`, `src/display/`, `src/lcd_driver/`, `src/config/`, with integration tests under `tests/`.
+- **Tooling**: `cargo fmt`, `cargo clippy -- -D warnings`, `cargo test`, `cargo build --release` when needed. Keep runtime RSS < 5 MB and avoid busy loops.
+- **Storage policy**: only `~/.serial_lcd/config.toml` is persistent; every other write (logs, temp files, chunk buffers) must stay inside `/run/serial_lcd_cache`.
+- **CLI stability**: flags stay `--run`, `--test-lcd`, `--test-serial`, `--device`, `--baud`, `--cols`, `--rows`, `--demo`. No new interfaces (no networking, HTTP, sockets) without explicit approval.
+- **Allowed crates**: std, `hd44780-driver`, `linux-embedded-hal`, `rppal`, `serialport`, `tokio-serial` (optional `async-serial` feature), `tokio` (only when async serial is required), `serde`, `serde_json`, `crc32fast`, `ctrlc`, optional `anyhow`/`thiserror`, `log`/`tracing`.
 
-Hard constraints (always include)
---------------------------------
-- Run the test suite locally and include the full test output (`cargo test` or a targeted test command).
-- Make the smallest possible change needed to solve the request.
-- Add or update tests for any behavioral change.
-- Preserve public APIs and CLI machine-facing outputs unless explicitly allowed.
-- Avoid removing features or tests. If behavior is changed, add a migration note and tests.
+Hard constraints
+----------------
+1. Make the smallest change that satisfies the request; never invent new protocols or CLI flags without written approval.
+2. Add or refresh tests for every behavioral change (module tests or integration tests under `tests/`).
+3. Update README/Rustdoc whenever user-facing behavior (flags, config schema, LCD output) changes.
+4. Keep writes inside `/run/serial_lcd_cache` unless operating on `~/.serial_lcd/config.toml`.
+5. Run the requested `cargo test` command locally and include the full output (after `cargo fmt`/`cargo clippy`).
 
-Repository preferences (from repo instructions)
---------------------------------------------
-- Prefer idiomatic Rust: `snake_case`, `Result` error handling, avoid `unwrap()` except in tiny examples/tests.
-- Keep patches minimal and focused on the impacted modules.
-- Add doc-comments on public APIs and small unit tests for new helpers.
-
-Prompt Template
+Prompt template
 ---------------
-Use this template when you want a code change, refactor, or test added. Replace placeholders in <angle-brackets>.
-
 Task:
 """
-<Brief one-line summary of the requested change>
+<One-line summary of the requested change>
 
 Details:
 - What to change: <short description of edits or behavior change>
- - Files to consider (optional): <comma-separated list, e.g., `app/src/app.rs, app/src/ui/panels.rs`>
-- Tests: <describe which tests to add/update or leave blank to auto-detect>
-- Constraints / do not modify: <list any files/behaviors that must remain unchanged>
+- Files to touch: <comma-separated list>
+- Tests: <which tests to add/run>
+- Docs: <README/spec updates or leave blank>
+- Constraints / do not modify: <list anything that must stay intact>
 """
 
-Assistant instructions (use when generating the patch):
-"""
-You are an expert Rust developer working inside the fileZoom repository. Produce a minimal, well-tested change that implements the requested feature.
+Assistant instructions
+----------------------
+1. Outline a 2–3 bullet plan referencing the affected modules.
+2. Implement the change using idiomatic Rust (`Result`, no unchecked `unwrap` outside tests) and respect RAM-disk/LCD constraints.
+3. Add/adjust tests proving the behavior (module tests or integration suites under `tests/`).
+4. Run `cargo test` (or the provided command) and include the full output. Fix failures before returning.
+5. Return:
+   - A concise summary with file paths.
+   - Exact patches using `apply_patch` V4A diff format.
+   - Test output (and failure logs, if any, before the fix).
+   - Optional follow-up ideas or manual verification notes.
 
-Action steps you must follow:
-1. Explain the plan in 2–3 bullets. Keep it concise.
-2. Make the smallest possible code changes. Use the repository's style and conventions.
-3. Add or update unit/integration tests that validate the behavior change.
-4. Run `cargo test -p fileZoom` (or a specified `cargo test` command) and paste the full output.
-5. If tests fail, iterate up to 5 times to fix failures (explain each iteration briefly and show test outputs).
-6. When done, return:
-   - A short summary of changes with file paths.
-   - The exact patch(s) you would apply (prefer the `apply_patch` V4A diff format).
-   - The `cargo test` output showing passing tests.
-   - Suggested next steps or optional improvements.
-
-Constraints:
-- Do not change public CLI flags or outputs unless specifically requested.
-- Preserve behavior unless tests indicate an intentional change.
-"""
-
-Example Prompts
+Example prompts
 ---------------
-- Bug fix: "Task: Fix crash when opening empty directory. Details: guard against index-out-of-bounds in `App::enter` when a panel has no entries. Files: `app/src/app.rs`. Add unit test reproducing the crash."
--- Feature: "Task: Make top menu interactable via arrow keys and Enter. Details: add menu state, render highlight, and handle input in `main.rs`. Files: `app/src/ui/menu.rs`, `app/src/main.rs`. Add tests for menu helper functions and describe manual test steps for the interactive parts."
--- Refactor: "Task: Extract panel list rendering to `app/src/ui/panels.rs` (if not present). Details: move helper functions, add unit tests for formatting helpers. Files: `app/src/ui.rs` -> `app/src/ui/panels.rs`. Ensure `cargo test -p fileZoom` passes."
+- "Task: Harden config loader defaults. Details: reject invalid LCD dimensions, ensure scroll/page fallbacks. Files: `src/config/loader.rs`, `tests/bin_smoke.rs`. Tests: `cargo test config`. Docs: README config table."
+- "Task: Add reconnect metrics to `--test-serial`. Details: print counters from `LoopStats`. Files: `src/app/render_loop.rs`, `src/cli.rs`. Tests: extend `tests/bin_smoke.rs::prints_loop_stats`. Constraints: keep CLI flag list unchanged."
+- "Task: Refresh LCD overlays for dashboard mode. Details: adjust `src/display/overlays.rs` to reduce flicker, add regression test. Files: `src/display/overlays.rs`, `tests/integration_mock.rs`. Tests: `cargo test overlays`."
 
-Usage Guidance for VS Code Copilot Prompt Files
-------------------------------------------------
-- Place this file under `.github/instructions/` or use `*.prompt.md` for quick access in the Copilot UI.
-- When invoking the prompt in the editor, paste the filled Task/Details sections. The assistant should return an actionable patch and test outputs.
-
-Notes
------
-- Keep critical rules (hard constraints) at the top of prompts where possible — Copilot Code Review reads only the first ~4,000 characters of custom instruction files.
-- If a requested change affects shared public API, include a short migration note and tests demonstrating the new behavior.
+Usage notes
+-----------
+- Keep the guardrails near the top; Copilot only reads the first few kilobytes.
+- When changes impact serial framing, RAM usage, or CLI flags, call those out explicitly so reviewers can cross-check against `.github/copilot-instructions.md`.

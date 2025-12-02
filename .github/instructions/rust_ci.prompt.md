@@ -1,20 +1,21 @@
 ---
 name: rust_ci
-description: "Prompt template for CI/CD pipeline tasks in Rust projects."
+description: "Prompt template for CI/CD work specific to the LifelineTTY project."
 ---
 
 Scope
 -----
--- Typical files: `.github/workflows/*`, `Cargo.toml`, `Cargo.lock`, or project-specific CI configs.
--- Applies to build/test automation, linting, formatting, and deployment steps.
+- Typical files: `.github/workflows/*.yml`, `Makefile`, `scripts/local-release.sh`, Dockerfiles under `docker/`, and packaging metadata.
+- Applies to build/test automation, linting, cross-compilation (armv6/armv7/arm64), and release verification for the `lifelinetty` crate.
+- CI must run `cargo fmt`, `cargo clippy -- -D warnings`, `cargo test`, and (when requested) packaging tasks while honoring the RAM-disk + systemd constraints described in `.github/copilot-instructions.md`.
 
 Hard constraints
 ----------------
-- Keep CI changes minimal and focused on the requested update.
-- Preserve reproducibility and correctness of builds/tests.
-- Ensure `cargo build`, `cargo test`, `cargo fmt`, and `cargo clippy` run successfully in CI.
-- Do not remove existing jobs unless explicitly requested.
-- Document changes in workflow comments or README if behavior changes.
+1. Keep workflow edits minimal and scoped to the requested change.
+2. Always run `cargo fmt --check`, `cargo clippy -- -D warnings`, and the appropriate `cargo test` matrix (host + cross targets when relevant).
+3. Preserve existing jobs unless the request explicitly removes them; add comments when behavior changes.
+4. Ensure CI respects the project charter (no network calls, CLI flags remain stable, packaging still installs `lifelinetty`).
+5. When adding uploads (artifacts, releases), ensure they contain only RAM-safe outputs (no secrets, no persistent config files).
 
 Prompt template
 ---------------
@@ -30,18 +31,18 @@ Details:
 
 Assistant instructions
 ----------------------
-1. Provide a concise plan (2–3 bullets).
-2. Make the smallest possible CI/CD changes consistent with project style.
-3. Add or update workflow steps to validate builds/tests.
-4. Run `cargo test -p <crate_name>` locally and paste the full output to confirm correctness.
+1. Provide a concise 2–3 bullet plan outlining workflow edits.
+2. Make the smallest possible CI/CD changes consistent with repo style (matrix layout, caching, packaging scripts).
+3. Ensure workflows run `cargo fmt --check`, `cargo clippy -- -D warnings`, and the requested `cargo test`/cross-build steps.
+4. Run the most relevant `cargo test` command locally (typically `cargo test`) and paste the full output to prove correctness.
 5. Return:
    - Short summary of changes with file paths.
-   - Exact patch(s) in `apply_patch` diff format.
+   - Exact patch(es) in `apply_patch` format.
    - The `cargo test` output showing passing tests.
-   - Suggested next steps (e.g., caching, deployment, coverage reporting).
+   - Suggested next steps (e.g., caching improvements, matrix expansion, release automation).
 
 Example prompts
 ---------------
-- "Task: Add GitHub Actions workflow to run `cargo fmt --check` and `cargo clippy`. Details: update `.github/workflows/ci.yml`. Files: `.github/workflows/ci.yml`. Ensure tests pass."
-- "Task: Add test matrix for Rust versions 1.70, 1.71, stable. Details: update workflow. Files: `.github/workflows/test.yml`. Run `cargo test` in each job."
-- "Task: Enable dependency caching in CI. Details: add `actions/cache` for cargo registry and target dir. Files: `.github/workflows/ci.yml`."
+- "Task: Add `armv6` cross-build job using Dockerfile. Details: extend `.github/workflows/ci.yml` matrix to call `docker/Dockerfile.armv6`. Include `cargo test` on host."
+- "Task: Enforce `cargo fmt --check` + `cargo clippy -- -D warnings` before packaging. Details: split lint job out of main workflow. Files: `.github/workflows/ci.yml`."
+- "Task: Cache `target/` + crates.io index between jobs. Details: add `actions/cache` keyed by `Cargo.lock`. Files: `.github/workflows/ci.yml`."

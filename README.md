@@ -176,11 +176,13 @@ Stored at:
 ~/.serial_lcd/config.toml
 ```
 
+By default the daemon listens on `/dev/ttyUSB0` at 9600 8N1. Edit the config (or pass CLI flags) to point at `/dev/ttyAMA0`, `/dev/ttyS0`, USB adapters, or any other TTY that exposes your sender.
+
 Example:
 
 ```toml
-device = "/dev/ttyAMA0"
-baud = 115200
+device = "/dev/ttyUSB0"
+baud = 9600
 cols = 20
 rows = 4
 scroll_speed_ms = 250
@@ -254,10 +256,10 @@ You should see something like `27` or `3f`.
 
 Try:
 
-```
+```text
+/dev/ttyUSB0
 /dev/ttyAMA0
 /dev/ttyS0
-/dev/ttyUSB0
 ```
 
 ---

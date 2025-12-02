@@ -3,8 +3,8 @@ use std::path::Path;
 
 pub mod loader;
 
-pub const DEFAULT_DEVICE: &str = "/dev/ttyAMA0";
-pub const DEFAULT_BAUD: u32 = 115_200;
+pub const DEFAULT_DEVICE: &str = "/dev/ttyUSB0";
+pub const DEFAULT_BAUD: u32 = 9_600;
 pub const DEFAULT_COLS: u8 = 20;
 pub const DEFAULT_ROWS: u8 = 4;
 pub const DEFAULT_SCROLL_MS: u64 = 250;

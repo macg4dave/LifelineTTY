@@ -1,9 +1,3 @@
----
-name: "Rust Project Assistant"
-scope: "repository"
-description: "Repository-aware Copilot prompt template for Rust projects. Use this when asking for code changes, tests, or PR-ready patches."
----
-
 Context
 -------
 -- Project: <project_name> — a Rust application or library.

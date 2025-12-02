@@ -24,7 +24,7 @@ Ship a single, ultra-light Rust daemon for Raspberry Pi 1 (ARMv6) that reads ne
 
 ## Tech + dependencies
 - **Language**: Rust 2021, `lifelinetty` crate only.
-- **Allowed crates**: std, `hd44780-driver`, `linux-embedded-hal`, `rppal`, `serialport`, `tokio-serial` (feature `async-serial`), `tokio` (only for async serial), `serde`, `serde_json`, `crc32fast`, `ctrlc`, optional `anyhow`, `thiserror`, `log`, `tracing`. New crates require approval.
+- **Allowed crates**: std, `hd44780-driver`, `linux-embedded-hal`, `rppal`, `serialport`, `tokio-serial` (feature `async-serial`), `tokio` (only for async serial), `serde`, `serde_json`, `crc32fast`, `ctrlc`, optional `anyhow`, `thiserror`, `log`, `tracing`, plus the roadmap-aligned helpers: `calloop`, `async-io`, `syslog-rs`, `os_info`, `crossbeam`, `rustix`, `sysinfo`, `futures`, `directories`, `humantime`, `serde_bytes`, `bincode`, `clap_complete`, `indicatif`, and `tokio-util`. If a crate already exists for the function you need, add it from this list and use it rather than re-implementing the feature. Do **not** remove existing crate dependencies without explicit permission. Every new crate that lands must be documented in `docs/lifelinetty_creates.md`; treat that file as a living reference, not a limit on future roadmap-approved crates.
 - **Banned crates**: anything pulling in a network stack, heavyweight runtime, database, or filesystem abstraction that writes outside allowed paths.
 - **Build/test commands**: `cargo fmt`, `cargo clippy -- -D warnings`, `cargo test`, `cargo build --release` when needed. All must pass on x86_64 **and** ARMv6.
 

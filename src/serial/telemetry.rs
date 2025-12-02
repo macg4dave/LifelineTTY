@@ -6,14 +6,27 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const TELEMETRY_FILE: &str = "serial_backoff.log";
-static FILE_HANDLE: OnceLock<Mutex<std::fs::File>> = OnceLock::new();
+static FILE_HANDLE: OnceLock<io::Result<Mutex<std::fs::File>>> = OnceLock::new();
 
-#[derive(Debug, Clone, Copy, Serialize)]
-#[serde(rename_all = "lowercase"])
+#[derive(Debug, Clone, Copy)]
 pub enum BackoffPhase {
     Attempt,
     Success,
     Failure,
+}
+
+impl Serialize for BackoffPhase {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let slug = match self {
+            BackoffPhase::Attempt => "attempt",
+            BackoffPhase::Success => "success",
+            BackoffPhase::Failure => "failure",
+        };
+        serializer.serialize_str(slug)
+    }
 }
 
 #[derive(Serialize)]
@@ -50,8 +63,8 @@ pub fn log_backoff_event(
         baud,
     };
 
-    let line = serde_json::to_string(&entry)
-        .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+    let line =
+        serde_json::to_string(&entry).map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
     let handle = get_file()?;
     if let Ok(mut file) = handle.lock() {
         writeln!(file, "{line}")?;
@@ -60,7 +73,7 @@ pub fn log_backoff_event(
 }
 
 fn get_file() -> io::Result<&'static Mutex<std::fs::File>> {
-    FILE_HANDLE.get_or_try_init(|| {
+    match FILE_HANDLE.get_or_init(|| {
         let path = PathBuf::from(CACHE_DIR).join(TELEMETRY_FILE);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -70,5 +83,8 @@ fn get_file() -> io::Result<&'static Mutex<std::fs::File>> {
             .append(true)
             .open(path)?;
         Ok(Mutex::new(file))
-    })
+    }) {
+        Ok(mutex) => Ok(mutex),
+        Err(err) => Err(io::Error::new(io::ErrorKind::Other, err.to_string())),
+    }
 }

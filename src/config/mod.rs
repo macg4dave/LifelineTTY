@@ -48,6 +48,7 @@ pub struct Config {
     pub pcf8574_addr: Pcf8574Addr,
     pub backoff_initial_ms: u64,
     pub backoff_max_ms: u64,
+    pub command_allowlist: Vec<String>,
 }
 
 impl Default for Config {
@@ -63,6 +64,7 @@ impl Default for Config {
             pcf8574_addr: DEFAULT_PCF8574_ADDR,
             backoff_initial_ms: DEFAULT_BACKOFF_INITIAL_MS,
             backoff_max_ms: DEFAULT_BACKOFF_MAX_MS,
+            command_allowlist: Vec::new(),
         }
     }
 }
@@ -121,6 +123,13 @@ pub(crate) fn validate(cfg: &Config) -> Result<()> {
         return Err(Error::InvalidArgs(format!(
             "page_timeout_ms must be at least {MIN_PAGE_TIMEOUT_MS}"
         )));
+    }
+    for entry in &cfg.command_allowlist {
+        if entry.trim().is_empty() {
+            return Err(Error::InvalidArgs(
+                "command_allowlist entries must be non-empty".to_string(),
+            ));
+        }
     }
     Ok(())
 }
@@ -217,6 +226,7 @@ mod tests {
             pcf8574_addr: Pcf8574Addr::Auto,
             backoff_initial_ms: DEFAULT_BACKOFF_INITIAL_MS,
             backoff_max_ms: DEFAULT_BACKOFF_MAX_MS,
+            command_allowlist: Vec::new(),
         };
         cfg.save_to_path(&path).unwrap();
         let loaded = Config::load_from_path(&path).unwrap();

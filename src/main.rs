@@ -1,7 +1,11 @@
+#[cfg(feature = "serialsh")]
+use lifelinetty::app::serial_shell;
+#[cfg(not(feature = "serialsh"))]
+use lifelinetty::Error;
 use lifelinetty::{
     app::App,
     cli::{Command, RunMode, RunOptions},
-    Error, Result,
+    Result,
 };
 
 fn main() {
@@ -39,11 +43,7 @@ fn try_main() -> Result<()> {
 
 #[cfg(feature = "serialsh")]
 fn run_serial_shell(opts: RunOptions) -> Result<()> {
-    // P7: placeholder wiring until Milestone A exposes the command tunnel.
-    Err(Error::InvalidArgs(format!(
-        "--serialsh is gated behind milestone A; received options: {:?}",
-        opts
-    )))
+    serial_shell::run_serial_shell(opts)
 }
 
 #[cfg(not(feature = "serialsh"))]

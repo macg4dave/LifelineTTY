@@ -39,6 +39,8 @@ pub fn save_to_path(config: &Config, path: &Path) -> Result<()> {
         fs::create_dir_all(parent)?;
     }
 
+    let allowlist = format_string_array(&config.command_allowlist);
+
     let contents = format!(
         "# lifelinetty config\n\
 device = \"{}\"\n\
@@ -65,6 +67,7 @@ backoff_max_ms = {}\n",
         config.backoff_initial_ms,
         config.backoff_max_ms
     );
+    let contents = format!("{contents}command_allowlist = {}\n", allowlist);
     fs::write(path, contents)?;
     Ok(())
 }
@@ -135,6 +138,14 @@ pub fn parse(raw: &str) -> Result<Config> {
                     })?);
                 }
             }
+            "command_allowlist" => {
+                cfg.command_allowlist = parse_string_array(value).map_err(|e| {
+                    Error::InvalidArgs(format!(
+                        "invalid command_allowlist on line {}: {e}",
+                        idx + 1
+                    ))
+                })?;
+            }
             other => {
                 return Err(Error::InvalidArgs(format!(
                     "unknown config key '{}' on line {}",
@@ -154,6 +165,60 @@ fn config_path() -> Result<PathBuf> {
         .map(PathBuf::from)
         .ok_or_else(|| Error::InvalidArgs("HOME not set; cannot locate config directory".into()))?;
     Ok(home.join(CONFIG_DIR_NAME).join(CONFIG_FILE_NAME))
+}
+
+fn parse_string_array(value: &str) -> std::result::Result<Vec<String>, String> {
+    let trimmed = value.trim();
+    if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
+        return Err("expected array literal (e.g., [\"cmd\", \"other\"])".into());
+    }
+    let inner = &trimmed[1..trimmed.len() - 1];
+    if inner.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut entries = Vec::new();
+    for part in inner.split(',') {
+        let item = part.trim();
+        if item.is_empty() {
+            continue;
+        }
+        let cleaned = if item.len() >= 2
+            && ((item.starts_with('"') && item.ends_with('"'))
+                || (item.starts_with('\'') && item.ends_with('\'')))
+        {
+            &item[1..item.len() - 1]
+        } else {
+            item
+        };
+        let cleaned = cleaned.trim();
+        if cleaned.is_empty() {
+            return Err("command entries must not be empty".into());
+        }
+        entries.push(cleaned.to_string());
+    }
+    Ok(entries)
+}
+
+fn format_string_array(values: &[String]) -> String {
+    if values.is_empty() {
+        return "[]".into();
+    }
+    let quoted = values
+        .iter()
+        .map(|value| {
+            let mut encoded = String::new();
+            for ch in value.chars() {
+                match ch {
+                    '\\' => encoded.push_str("\\\\"),
+                    '"' => encoded.push_str("\\\""),
+                    other => encoded.push(other),
+                }
+            }
+            format!("\"{}\"", encoded)
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{quoted}]")
 }
 
 #[cfg(test)]
@@ -220,6 +285,24 @@ mod tests {
     }
 
     #[test]
+    fn parses_command_allowlist() {
+        let path = temp_path("allowlist");
+        fs::write(&path, "command_allowlist = [\"ls\", \"uptime\"]").unwrap();
+        let cfg = load_from_path(&path).unwrap();
+        assert_eq!(cfg.command_allowlist, vec!["ls", "uptime"]);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn rejects_invalid_command_allowlist_literal() {
+        let path = temp_path("bad_allowlist");
+        fs::write(&path, "command_allowlist = ls").unwrap();
+        let err = load_from_path(&path).unwrap_err();
+        assert!(format!("{err}").contains("command_allowlist"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn rejects_unknown_key() {
         let path = temp_path("unknown");
         fs::write(&path, "nope = 1").unwrap();
@@ -242,6 +325,7 @@ mod tests {
             pcf8574_addr: Pcf8574Addr::Auto,
             backoff_initial_ms: DEFAULT_BACKOFF_INITIAL_MS,
             backoff_max_ms: DEFAULT_BACKOFF_MAX_MS,
+            command_allowlist: Vec::new(),
         };
         save_to_path(&cfg, &path).unwrap();
         let loaded = load_from_path(&path).unwrap();

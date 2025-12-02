@@ -20,6 +20,8 @@ LifelineTTY is the successor to SerialLCD: a single Rust daemon for Raspberry Pi
 5. **B5 — AI prompt + automation refresh (✅ 2 Dec 2025)**: `.github/instructions/*.md` and devtool prompts now explicitly describe LifelineTTY’s mission, storage guardrails, and serial defaults before downstream contributors start feature work.
 6. **B6 — Release tooling sanity pass (✅ 2 Dec 2025)**: `scripts/local-release.sh`, Dockerfiles, packaging metadata, and docs ship only `lifelinetty_*` binaries/service units; legacy `seriallcd` symlinks and units have been retired.
 
+Note: A set of minimal roadmap skeleton modules has been added to the repository to help iterate on Milestones quickly. See `docs/roadmap_skeletons.md` for the layout and next steps.
+
 > _Only after B1–B6 are closed should we land anything from the P1–P20 queue or milestone features below._
 
 ## Priority queue (P1–P20)
@@ -44,6 +46,31 @@ LifelineTTY is the successor to SerialLCD: a single Rust daemon for Raspberry Pi
 | **P17** | **Remote file integrity tooling**: CLI helper to verify checksums and list staged chunks in `/run/serial_lcd_cache`. |
 | **P18** | **Config-driven polling profiles**: allow `profiles` table in `config.toml` to customize polling intervals per metric, validated via tests. ||
 | **P19** | **Documentation + sample payload refresh**: update `README.md`, `samples/payload_examples*.json`, and `docs/lcd_patterns.md` showing new modes and tunnels. |
+
+## Crate guidance for roadmap alignment
+
+The crates listed here come from `docs/creates_to_check.md`. Each is rated for the part of the roadmap where it will deliver the most value so we avoid scope creep and keep the dependency list grounded in current plans.
+
+| Crate | Roadmap anchor | Why it fits |
+| ----- | --------------- | ------------ |
+| `calloop` | P11 / Milestone D | Lightweight event loop that can orchestrate `/proc` watchers, heartbeat timers, and serial input without a heavyweight async runtime or extra RAM pressure. |
+| `async-io` | P8 / Milestone A | Non-blocking I/O helpers for streaming child stdout/stderr and UART frames; useful when multiplexing tunnel traffic without importing `tokio`. |
+| `syslog-rs` | B3 / P5 | Sends warnings and telemetry to syslog while keeping RAM-only cache writes law-abiding, supporting the serial backoff telemetry goal. |
+| `serde_json` | P8 / Milestones A, B, C | Already central to payload framing, will continue to anchor command/response envelopes, handshake payloads, and chunk metadata. |
+| `os_info` | P11 / Milestone D | Provides host OS/arch metadata for polling and telemetry packets to aid debugging on the ARMv6 targets. |
+| `crossbeam` | P11 / Milestone D | Scoped threads and channels that prevent the polling/render/serial lanes from blocking one another as telemetry work grows. |
+| `rustix` | P8 / Milestone A | Safe wrappers for low-level ioctls/termios so serial port tweaks or PTY-style helpers stay within the charter. |
+| `sysinfo` | P11 / Milestone D | CPU/memory/disk snapshots for the polling subsystem while respecting the `<5 MB RSS` constraint. |
+| `futures` | P8 / Milestone A | Combinators and stream helpers when we need async-aware state machines for command tunnels or serial shell output streams. |
+| `directories` | B3 / P4 | Canonicalizes `~/.serial_lcd` and cache paths so config/history helpers never wander outside the allowed directories. |
+| `humantime` | P15 / Milestone D | Human-friendly duration parsing for heartbeat/polling intervals and log messages, aiding CLI/telemetry clarity. |
+| `serde_bytes` | P10 / Milestone C | Binary serialization for chunk payloads to avoid base64 bloat when transferring files. |
+| `bincode` | P10 / Milestone C | Compact manifests or CLI history caches stored under `CACHE_DIR`, keeping resume data tiny and deterministic. |
+| `clap_complete` | P16 / Milestone G | Shell completion generation once `serialsh` options stabilize, aligning docs + CLI UX. |
+| `indicatif` | P10 / Milestone C | CLI progress bars/spinners for `--push/--pull` helpers; keep outputs plain so they stay automation friendly. |
+| `tokio-util` | P8 / P10 / Milestones A/C | Framed readers/writers and codecs that can simplify tunnel/frame helpers if we adopt `tokio` for higher-level protocols. |
+
+Update this section or `docs/createstocheck.md` whenever priorities shift so the dependency rationale stays tied to the latest roadmap state.
 
 ## Milestones (big features & dependencies)
 

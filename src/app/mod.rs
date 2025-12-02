@@ -1,5 +1,5 @@
 use crate::{
-    cli::{RunMode, RunOptions},
+    cli::RunOptions,
     config::Pcf8574Addr,
     config::{Config, DEFAULT_BAUD, DEFAULT_COLS, DEFAULT_DEVICE, DEFAULT_ROWS},
     lcd::Lcd,
@@ -9,13 +9,20 @@ use crate::{
 };
 use std::{fs, str::FromStr, time::Instant};
 
+mod compression;
 mod connection;
 mod demo;
 mod events;
+mod file_transfer;
 mod input;
 mod lifecycle;
 mod logger;
+mod polling;
 mod render_loop;
+#[cfg(feature = "serialsh")]
+pub mod serial_shell;
+mod tunnel;
+mod watchdog;
 
 use crate::display::overlays::{render_frame_once, render_reconnecting};
 use connection::{attempt_serial_connect, BackoffController};
@@ -40,6 +47,7 @@ pub struct AppConfig {
     pub log_level: LogLevel,
     pub log_file: Option<String>,
     pub demo: bool,
+    pub command_allowlist: Vec<String>,
 }
 
 impl Default for AppConfig {
@@ -59,6 +67,7 @@ impl Default for AppConfig {
             log_level: LogLevel::default(),
             log_file: None,
             demo: false,
+            command_allowlist: Vec::new(),
         }
     }
 }
@@ -150,6 +159,7 @@ impl AppConfig {
                 .unwrap_or_default(),
             log_file: opts.log_file,
             demo: opts.demo,
+            command_allowlist: config.command_allowlist.clone(),
         }
     }
 }
@@ -162,6 +172,7 @@ fn load_payload_from_file(path: &str, defaults: PayloadDefaults) -> Result<Rende
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::RunMode;
     use crate::config::Config;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -219,6 +230,7 @@ mod tests {
             backoff_initial_ms: crate::config::DEFAULT_BACKOFF_INITIAL_MS,
             backoff_max_ms: crate::config::DEFAULT_BACKOFF_MAX_MS,
             pcf8574_addr: crate::config::DEFAULT_PCF8574_ADDR,
+            command_allowlist: Vec::new(),
         };
         let opts = RunOptions::default();
         let merged = AppConfig::from_sources(cfg_file.clone(), opts);

@@ -211,9 +211,7 @@ fn take_value(flag: &str, iter: &mut std::slice::Iter<String>) -> Result<String>
 
 #[cfg(feature = "serialsh")]
 fn validate_serialsh_options(opts: &RunOptions) -> Result<()> {
-    if matches!(opts.mode, RunMode::SerialShell)
-        && (opts.payload_file.is_some() || opts.demo)
-    {
+    if matches!(opts.mode, RunMode::SerialShell) && (opts.payload_file.is_some() || opts.demo) {
         return Err(Error::InvalidArgs(
             "--serialsh cannot be combined with --demo or --payload-file".to_string(),
         ));

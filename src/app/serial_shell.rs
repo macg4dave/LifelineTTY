@@ -1,4 +1,4 @@
-#![cfg(feature = "serialsh")]
+#![cfg(feature = "serialsh-preview")]
 
 use crate::payload::{decode_tunnel_frame, encode_tunnel_msg};
 use crate::{

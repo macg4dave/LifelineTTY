@@ -1,6 +1,6 @@
 use crate::CACHE_DIR;
 use serde::Serialize;
-use std::io::{self, Write};
+use std::io::{self, ErrorKind, Write};
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -8,25 +8,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const TELEMETRY_FILE: &str = "serial_backoff.log";
 static FILE_HANDLE: OnceLock<io::Result<Mutex<std::fs::File>>> = OnceLock::new();
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum BackoffPhase {
     Attempt,
     Success,
     Failure,
-}
-
-impl Serialize for BackoffPhase {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let slug = match self {
-            BackoffPhase::Attempt => "attempt",
-            BackoffPhase::Success => "success",
-            BackoffPhase::Failure => "failure",
-        };
-        serializer.serialize_str(slug)
-    }
 }
 
 #[derive(Serialize)]
@@ -73,18 +60,27 @@ pub fn log_backoff_event(
 }
 
 fn get_file() -> io::Result<&'static Mutex<std::fs::File>> {
-    match FILE_HANDLE.get_or_init(|| {
-        let path = PathBuf::from(CACHE_DIR).join(TELEMETRY_FILE);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)?;
-        Ok(Mutex::new(file))
-    }) {
-        Ok(mutex) => Ok(mutex),
-        Err(err) => Err(io::Error::new(io::ErrorKind::Other, err.to_string())),
+    if FILE_HANDLE.get().is_none() {
+        let handle = create_file_handle()?;
+        let _ = FILE_HANDLE.set(handle);
     }
+
+    FILE_HANDLE.get().ok_or_else(|| {
+        io::Error::new(
+            ErrorKind::Other,
+            "failed to initialize serial telemetry log handle",
+        )
+    })
+}
+
+fn create_file_handle() -> io::Result<Mutex<std::fs::File>> {
+    let path = PathBuf::from(CACHE_DIR).join(TELEMETRY_FILE);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    Ok(Mutex::new(file))
 }

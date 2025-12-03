@@ -98,6 +98,22 @@ fn help_lists_core_flags() {
             "help output missing flag {flag}: {help}"
         );
     }
+
+    #[cfg(feature = "serialsh-preview")]
+    {
+        assert!(
+            help.contains("--serialsh"),
+            "help output missing --serialsh: {help}"
+        );
+    }
+
+    #[cfg(not(feature = "serialsh-preview"))]
+    {
+        assert!(
+            !help.contains("--serialsh"),
+            "help output unexpectedly lists --serialsh without the preview feature"
+        );
+    }
 }
 
 #[test]

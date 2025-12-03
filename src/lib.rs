@@ -9,6 +9,7 @@ pub mod serial;
 #[cfg(feature = "async-serial")]
 pub mod serial_async;
 pub mod state;
+pub mod milestones;
 
 pub const CACHE_DIR: &str = "/run/serial_lcd_cache";
 

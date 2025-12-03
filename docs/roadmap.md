@@ -35,7 +35,7 @@ There is also a short frameworks document that describes the set of skeleton mod
 | **P3 (✅ 2 Dec 2025)** | **Config loader hardening**: enhance `src/config/loader.rs` to validate cols/rows ranges, default scroll/page timings, and ensure `~/.serial_lcd/config.toml` schema doc matches real struct. |
 | **P4 (✅ 2 Dec 2025)** | **LCD driver regression tests**: expand `src/lcd_driver` tests for flicker-free updates, blinking, and icon resets; ensure no `unsafe`. |
 | **P5 (✅ 2 Dec 2025)** | **Serial backoff telemetry**: add structured logging to `src/serial/*` capturing reconnect counts into `/run/serial_lcd_cache/serial_backoff.log`, respecting RAM-only constraint. |
-| **P7** | **CLI integration mode groundwork**: design `serialsh` pseudo-shell behaviour within current CLI (`lifelinetty --run --serialsh` placeholder flag) while keeping contract stable; gated behind feature flag until milestone ready. |
+| **P7 (✅ 3 Dec 2025)** | **CLI integration mode groundwork**: implemented `serialsh` preview flag (gated behind `serialsh-preview` feature), added `ShellContext` preview run path, and tests reflecting the flow. |
 | **P8** | **Bi-directional command tunnel core**: base framing library in `src/payload/parser.rs` for command request/response envelopes (no network). Must reuse newline JSON framing. |
 | **P9** | **Server/client auto-negotiation**: implement handshake state in `src/app/connection.rs`, ensuring deterministic fallback to current behaviour when remote does not understand negotiation packets. |
 | **P10** | **Remote file push/pull transport**: extend payload schema for chunk IDs, checksums, resume markers; add tests covering corruption detection. Respect RAM-only buffering. |

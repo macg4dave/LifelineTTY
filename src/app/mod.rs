@@ -1,5 +1,5 @@
 use crate::{
-    cli::RunOptions,
+    cli::{RunOptions, RunMode},
     config::Pcf8574Addr,
     config::{Config, DEFAULT_BAUD, DEFAULT_COLS, DEFAULT_DEVICE, DEFAULT_ROWS},
     lcd::Lcd,
@@ -20,7 +20,7 @@ mod logger;
 mod negotiation;
 mod polling;
 mod render_loop;
-#[cfg(feature = "serialsh")]
+#[cfg(feature = "serialsh-preview")]
 pub mod serial_shell;
 mod telemetry;
 mod tunnel;
@@ -31,6 +31,9 @@ use connection::{attempt_serial_connect, BackoffController};
 use demo::run_demo;
 pub(crate) use logger::{LogLevel, Logger};
 use render_loop::run_render_loop;
+
+#[cfg(feature = "serialsh-preview")]
+use crate::milestones::serialsh::shell::ShellContext;
 
 /// Config for the daemon.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,6 +53,7 @@ pub struct AppConfig {
     pub log_file: Option<String>,
     pub demo: bool,
     pub command_allowlist: Vec<String>,
+    pub serialsh: bool,
 }
 
 impl Default for AppConfig {
@@ -70,6 +74,7 @@ impl Default for AppConfig {
             log_file: None,
             demo: false,
             command_allowlist: Vec::new(),
+            serialsh: false,
         }
     }
 }
@@ -94,6 +99,14 @@ impl App {
     /// Entry point for the daemon. Wire up serial + LCD here.
     pub fn run(&self) -> Result<()> {
         let mut config = self.config.clone();
+
+        #[cfg(feature = "serialsh-preview")]
+        if config.serialsh {
+            self.logger
+                .info("serialsh preview flag enabled (stub implementation)");
+            let shell = ShellContext::preview();
+            return shell.run();
+        }
         let mut lcd = Lcd::new(config.cols, config.rows, config.pcf8574_addr.clone())?;
         lcd.render_boot_message()?;
         self.logger.info(format!(
@@ -162,6 +175,7 @@ impl AppConfig {
             log_file: opts.log_file,
             demo: opts.demo,
             command_allowlist: config.command_allowlist.clone(),
+            serialsh: matches!(opts.mode, RunMode::SerialShell),
         }
     }
 }
@@ -206,6 +220,7 @@ mod tests {
             log_level: None,
             log_file: None,
             demo: false,
+            serialsh: false,
         };
         let cfg = AppConfig::from_sources(Config::default(), opts.clone());
         assert_eq!(cfg.device, "/dev/ttyUSB1");
@@ -243,6 +258,33 @@ mod tests {
         assert_eq!(merged.backoff_initial_ms, cfg_file.backoff_initial_ms);
         assert_eq!(merged.backoff_max_ms, cfg_file.backoff_max_ms);
         assert_eq!(merged.pcf8574_addr, cfg_file.pcf8574_addr);
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[cfg(feature = "serialsh-preview")]
+    #[test]
+    fn serialsh_flag_flows_into_app_config() {
+        let home = set_temp_home();
+        let mut opts = RunOptions::default();
+        opts.mode = RunMode::SerialShell;
+        let cfg = AppConfig::from_sources(Config::default(), opts.clone());
+        assert!(cfg.serialsh, "serialsh flag did not propagate to AppConfig");
+
+        let app = App::from_options(opts).expect("app construction failed");
+        assert!(app.config.serialsh, "serialsh flag did not persist in App");
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[cfg(feature = "serialsh-preview")]
+    #[test]
+    fn serialsh_run_returns_ok_via_app_run() {
+        let home = set_temp_home();
+        let mut opts = RunOptions::default();
+        opts.mode = RunMode::SerialShell;
+        let app = App::from_options(opts).expect("app construction failed");
+        // This should return Ok because the App.run() early-shortcircuits into
+        // the preview ShellContext which is a no-op that returns Ok.
+        assert!(app.run().is_ok(), "app.run() should succeed in serialsh-preview mode");
         let _ = std::fs::remove_dir_all(home);
     }
 }

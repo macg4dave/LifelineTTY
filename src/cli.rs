@@ -29,47 +29,19 @@ pub struct RunOptions {
     pub pcf8574_addr: Option<Pcf8574Addr>,
     pub log_level: Option<String>,
     pub log_file: Option<String>,
-    pub demo: bool,
-}
+        pub fn help() -> String {
+            let mut help = String::from(
+                "lifelinetty - Serial-to-LCD daemon\n\nUSAGE:\n  lifelinetty run [--device <path>] [--baud <number>] [--cols <number>] [--rows <number>] [--payload-file <path>]\n  lifelinetty --help\n  lifelinetty --version\n\nOPTIONS:\n  --device <path>   Serial device path (default: /dev/ttyUSB0)\n  --baud <number>   Baud rate (default: 9600)\n  --cols <number>   LCD columns (default: 20)\n  --rows <number>   LCD rows (default: 4)\n  --payload-file <path>  Load a local JSON payload and render it once (testing helper)\n  --backoff-initial-ms <number>  Initial reconnect backoff (default: 500)\n  --backoff-max-ms <number>      Maximum reconnect backoff (default: 10000)\n  --pcf8574-addr <auto|0xNN>     PCF8574 I2C address or 'auto' to probe (default: auto)\n  --log-level <error|warn|info|debug|trace>  Log verbosity (default: info)\n  --log-file <path>              Append logs inside /run/serial_lcd_cache (also honors LIFELINETTY_LOG_PATH)\n  --demo                         Run built-in demo pages on the LCD (no serial input)\n",
+            );
 
-/// Parsed command-line intent.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Command {
-    Run(RunOptions),
-    ShowHelp,
-    ShowVersion,
-}
-
-impl Command {
-    pub fn parse(args: &[String]) -> Result<Self> {
-        if args.is_empty() {
-            return Ok(Command::Run(RunOptions::default()));
-        }
-
-        let mut iter = args.iter();
-        match iter.next().map(|s| s.as_str()) {
-            Some("run") => Ok(Command::Run(parse_run_options(&mut iter)?)),
-            Some("--help") | Some("-h") => Ok(Command::ShowHelp),
-            Some("--version") | Some("-V") => Ok(Command::ShowVersion),
-            Some(flag) if flag.starts_with('-') => {
-                // Allow omitting the explicit `run` subcommand: pass the consumed flag plus the
-                // remaining args into the run parser.
-                let mut flags: Vec<String> = Vec::with_capacity(args.len());
-                flags.push(flag.to_string());
-                flags.extend(iter.map(|s| s.to_string()));
-                let mut iter = flags.iter();
-                Ok(Command::Run(parse_run_options(&mut iter)?))
+            #[cfg(feature = "serialsh-preview")]
+            {
+                help.push_str("  --serialsh                   Preview: enable the serial shell mode (feature-gated, incomplete)\n");
             }
-            Some(cmd) => Err(Error::InvalidArgs(format!(
-                "unknown command '{cmd}', try --help"
-            ))),
-            None => Ok(Command::Run(RunOptions::default())),
-        }
-    }
 
-    #[cfg(not(feature = "serialsh"))]
-    pub fn help() -> &'static str {
-        concat!(
+            help.push_str("  -h, --help        Show this help\n  -V, --version     Show version\n");
+            help
+        }
             "lifelinetty - Serial-to-LCD daemon\n",
             "\n",
             "USAGE:\n",
@@ -92,35 +64,25 @@ impl Command {
             "  -h, --help        Show this help\n",
             "  -V, --version     Show version\n",
         )
+=======
+    pub fn help() -> String {
+        let mut help = String::from(
+            "lifelinetty - Serial-to-LCD daemon\n\nUSAGE:\n  lifelinetty run [--device <path>] [--baud <number>] [--cols <number>] [--rows <number>] [--payload-file <path>]\n  lifelinetty --help\n  lifelinetty --version\n\nOPTIONS:\n  --device <path>   Serial device path (default: /dev/ttyUSB0)\n  --baud <number>   Baud rate (default: 9600)\n  --cols <number>   LCD columns (default: 20)\n  --rows <number>   LCD rows (default: 4)\n  --payload-file <path>  Load a local JSON payload and render it once (testing helper)\n  --backoff-initial-ms <number>  Initial reconnect backoff (default: 500)\n  --backoff-max-ms <number>      Maximum reconnect backoff (default: 10000)\n  --pcf8574-addr <auto|0xNN>     PCF8574 I2C address or 'auto' to probe (default: auto)\n  --log-level <error|warn|info|debug|trace>  Log verbosity (default: info)\n  --log-file <path>              Append logs inside /run/serial_lcd_cache (also honors LIFELINETTY_LOG_PATH)\n  --demo                         Run built-in demo pages on the LCD (no serial input)\n",
+        );
+
+        #[cfg(feature = "serialsh-preview")]
+        {
+            help.push_str(
+                "  --serialsh                   Preview: enable the serial shell mode (feature-gated, incomplete)\n",
+            );
+        }
+
+        help.push_str("  -h, --help        Show this help\n  -V, --version     Show version\n");
+        help
+>>>>>>> fa94790 (feat: Implement serialsh preview mode with CLI integration and command tunnel scaffolding)
     }
 
-    #[cfg(feature = "serialsh")]
-    pub fn help() -> &'static str {
-        concat!(
-            "lifelinetty - Serial-to-LCD daemon\n",
-            "\n",
-            "USAGE:\n",
-            "  lifelinetty run [--device <path>] [--baud <number>] [--cols <number>] [--rows <number>] [--payload-file <path>] [--serialsh]\n",
-            "  lifelinetty --help\n",
-            "  lifelinetty --version\n",
-            "\n",
-            "OPTIONS:\n",
-            "  --device <path>   Serial device path (default: /dev/ttyUSB0)\n",
-            "  --baud <number>   Baud rate (default: 9600)\n",
-            "  --cols <number>   LCD columns (default: 20)\n",
-            "  --rows <number>   LCD rows (default: 4)\n",
-            "  --payload-file <path>  Load a local JSON payload and render it once (testing helper)\n",
-            "  --backoff-initial-ms <number>  Initial reconnect backoff (default: 500)\n",
-            "  --backoff-max-ms <number>      Maximum reconnect backoff (default: 10000)\n",
-            "  --pcf8574-addr <auto|0xNN>     PCF8574 I2C address or 'auto' to probe (default: auto)\n",
-            "  --log-level <error|warn|info|debug|trace>  Log verbosity (default: info)\n",
-            "  --log-file <path>              Append logs inside /run/serial_lcd_cache (also honors LIFELINETTY_LOG_PATH)\n",
-            "  --demo                         Run built-in demo pages on the LCD (no serial input)\n",
-            "  --serialsh                     Experimental serial shell client (requires --features serialsh)\n",
-            "  -h, --help        Show this help\n",
-            "  -V, --version     Show version\n",
-        )
-    }
+    
 
     pub fn print_help() {
         println!("{}", Self::help());
@@ -186,10 +148,11 @@ fn parse_run_options(iter: &mut std::slice::Iter<String>) -> Result<RunOptions> 
             "--demo" => {
                 opts.demo = true;
             }
-            #[cfg(feature = "serialsh")]
+            #[cfg(feature = "serialsh-preview")]
             "--serialsh" => {
                 // P7: expose the serial shell gate while milestone A wiring lands.
                 opts.mode = RunMode::SerialShell;
+            }
             }
             other => {
                 return Err(Error::InvalidArgs(format!(
@@ -209,7 +172,7 @@ fn take_value(flag: &str, iter: &mut std::slice::Iter<String>) -> Result<String>
         .ok_or_else(|| Error::InvalidArgs(format!("expected a value after {flag}")))
 }
 
-#[cfg(feature = "serialsh")]
+#[cfg(feature = "serialsh-preview")]
 fn validate_serialsh_options(opts: &RunOptions) -> Result<()> {
     if matches!(opts.mode, RunMode::SerialShell) && (opts.payload_file.is_some() || opts.demo) {
         return Err(Error::InvalidArgs(
@@ -219,7 +182,7 @@ fn validate_serialsh_options(opts: &RunOptions) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(feature = "serialsh"))]
+#[cfg(not(feature = "serialsh-preview"))]
 fn validate_serialsh_options(_opts: &RunOptions) -> Result<()> {
     Ok(())
 }
@@ -318,7 +281,7 @@ mod tests {
         assert!(format!("{err}").contains("unknown flag"));
     }
 
-    #[cfg(feature = "serialsh")]
+    #[cfg(feature = "serialsh-preview")]
     #[test]
     fn parse_serialsh_flag_sets_mode() {
         let args = vec!["--serialsh".into(), "--device".into(), "fake".into()];
@@ -329,7 +292,7 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "serialsh")]
+    #[cfg(feature = "serialsh-preview")]
     #[test]
     fn serialsh_disallows_demo_and_payload_file() {
         let args = vec!["--serialsh".into(), "--demo".into()];
@@ -341,6 +304,14 @@ mod tests {
             "--payload-file".into(),
             "payload.json".into(),
         ];
+        let err = Command::parse(&args).unwrap_err();
+        assert!(format!("{err}").contains("serialsh"));
+    }
+
+    #[cfg(not(feature = "serialsh-preview"))]
+    #[test]
+    fn serialsh_flag_requires_feature() {
+        let args = vec!["--serialsh".into()];
         let err = Command::parse(&args).unwrap_err();
         assert!(format!("{err}").contains("serialsh"));
     }

@@ -166,7 +166,7 @@ Soon there will be a small companion tool that:
 - sends system metrics  
 - gives a GUI + CLI interface  
 
-**(TODO: lifelinetty‑send — placeholder section)**
+TODO: lifelinetty‑send — placeholder section.
 
 ---
 
@@ -174,7 +174,7 @@ Soon there will be a small companion tool that:
 
 Stored at:
 
-```
+```text
 ~/.serial_lcd/config.toml
 ```
 
@@ -234,8 +234,10 @@ Reload config without restarting the daemon:
 | `--log-level <error\|warn\|info\|debug\|trace>` | Verbosity for stderr/file logs. | `info` (also configurable via `LIFELINETTY_LOG_LEVEL`). |
 | `--log-file <path>` | Append logs to a file inside `/run/serial_lcd_cache` (also honors `LIFELINETTY_LOG_PATH`). | No file logging unless you provide a cache-rooted path. |
 | `--demo` | Run built-in demo pages to validate wiring—no serial input required. | Disabled by default. |
-| `--serialsh` | (P7) Experimental serial command shell flag gated behind the `serialsh` Cargo feature. | Build with `cargo build --features serialsh` to parse the flag; currently returns a placeholder error until Milestone A ships. |
+| `--serialsh` | **Preview (feature `serialsh-preview`)**: enable the upcoming serial shell mode. | Feature-gated placeholder; currently exits with a roadmap reminder until Milestone A lands. |
 | `--help` / `--version` | Display usage or the crate version. | Utility flags that never touch hardware. |
+
+> **Preview builds only:** compile with `cargo run --features serialsh-preview -- --run --serialsh` to exercise the gated flag. Official releases omit the flag entirely so existing automation stays stable.
 
 ### Serial precedence cheatsheet
 

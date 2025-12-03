@@ -56,6 +56,7 @@ scroll_speed_ms = {}\n\
 page_timeout_ms = {}\n\
 button_gpio_pin = {}\n\
 pcf8574_addr = {}\n\
+display_driver = {}\n\
 backoff_initial_ms = {}\n\
 backoff_max_ms = {}\n",
         config.device,
@@ -74,6 +75,7 @@ backoff_max_ms = {}\n",
             .map(|p| p.to_string())
             .unwrap_or_else(|| "null".into()),
         super::format_pcf_addr(&config.pcf8574_addr),
+        super::format_display_driver(&config.display_driver),
         config.backoff_initial_ms,
         config.backoff_max_ms
     );
@@ -152,6 +154,14 @@ pub fn parse(raw: &str) -> Result<Config> {
             "pcf8574_addr" => {
                 cfg.pcf8574_addr = super::parse_pcf_addr(value).map_err(|e| {
                     Error::InvalidArgs(format!("invalid pcf8574_addr on line {}: {e}", idx + 1))
+                })?;
+            }
+            "display_driver" => {
+                cfg.display_driver = value.parse().map_err(|e: String| {
+                    Error::InvalidArgs(format!(
+                        "invalid display_driver on line {}: {e}",
+                        idx + 1
+                    ))
                 })?;
             }
             "backoff_initial_ms" => {
@@ -259,7 +269,9 @@ fn format_string_array(values: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{Config, Pcf8574Addr, DEFAULT_BACKOFF_INITIAL_MS, DEFAULT_BACKOFF_MAX_MS};
+    use crate::config::{
+        Config, DisplayDriver, Pcf8574Addr, DEFAULT_BACKOFF_INITIAL_MS, DEFAULT_BACKOFF_MAX_MS,
+    };
     use crate::serial::{DtrBehavior, FlowControlMode, ParityMode, StopBitsMode};
     use std::{
         fs,
@@ -307,6 +319,7 @@ mod tests {
             page_timeout_ms = 4500
             button_gpio_pin = 17
             pcf8574_addr = "0x23"
+            display_driver = "in-tree"
             backoff_initial_ms = 750
             backoff_max_ms = 9000
         "#;
@@ -325,6 +338,7 @@ mod tests {
         assert_eq!(cfg.page_timeout_ms, 4500);
         assert_eq!(cfg.button_gpio_pin, Some(17));
         assert_eq!(cfg.pcf8574_addr, Pcf8574Addr::Addr(0x23));
+        assert_eq!(cfg.display_driver, DisplayDriver::InTree);
         assert_eq!(cfg.backoff_initial_ms, 750);
         assert_eq!(cfg.backoff_max_ms, 9000);
         let _ = fs::remove_file(path);
@@ -374,6 +388,7 @@ mod tests {
             page_timeout_ms: 4000,
             button_gpio_pin: Some(22),
             pcf8574_addr: Pcf8574Addr::Auto,
+            display_driver: DisplayDriver::Hd44780Driver,
             backoff_initial_ms: DEFAULT_BACKOFF_INITIAL_MS,
             backoff_max_ms: DEFAULT_BACKOFF_MAX_MS,
             command_allowlist: Vec::new(),

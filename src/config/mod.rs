@@ -20,6 +20,7 @@ pub const DEFAULT_PAGE_TIMEOUT_MS: u64 = 4000;
 pub const MIN_SCROLL_MS: u64 = 100;
 pub const MIN_PAGE_TIMEOUT_MS: u64 = 500;
 pub const DEFAULT_PCF8574_ADDR: Pcf8574Addr = Pcf8574Addr::Auto;
+pub const DEFAULT_DISPLAY_DRIVER: DisplayDriver = DisplayDriver::Auto;
 pub const DEFAULT_BACKOFF_INITIAL_MS: u64 = 500;
 pub const DEFAULT_BACKOFF_MAX_MS: u64 = 10_000;
 pub const DEFAULT_SERIAL_TIMEOUT_MS: u64 = 500;
@@ -42,6 +43,44 @@ impl std::str::FromStr for Pcf8574Addr {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisplayDriver {
+    Auto,
+    InTree,
+    Hd44780Driver,
+}
+
+impl Default for DisplayDriver {
+    fn default() -> Self {
+        DisplayDriver::Auto
+    }
+}
+
+impl std::str::FromStr for DisplayDriver {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "auto" => Ok(DisplayDriver::Auto),
+            "in-tree" | "intree" => Ok(DisplayDriver::InTree),
+            "hd44780-driver" | "hd44780" => Ok(DisplayDriver::Hd44780Driver),
+            other => Err(format!(
+                "expected 'auto', 'in-tree', or 'hd44780-driver', got '{other}'"
+            )),
+        }
+    }
+}
+
+impl std::fmt::Display for DisplayDriver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            DisplayDriver::Auto => "auto",
+            DisplayDriver::InTree => "in-tree",
+            DisplayDriver::Hd44780Driver => "hd44780-driver",
+        })
+    }
+}
+
 /// User-supplied settings loaded from the config file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
@@ -58,6 +97,7 @@ pub struct Config {
     pub page_timeout_ms: u64,
     pub button_gpio_pin: Option<u8>,
     pub pcf8574_addr: Pcf8574Addr,
+    pub display_driver: DisplayDriver,
     pub backoff_initial_ms: u64,
     pub backoff_max_ms: u64,
     pub command_allowlist: Vec<String>,
@@ -79,6 +119,7 @@ impl Default for Config {
             page_timeout_ms: DEFAULT_PAGE_TIMEOUT_MS,
             button_gpio_pin: None,
             pcf8574_addr: DEFAULT_PCF8574_ADDR,
+            display_driver: DEFAULT_DISPLAY_DRIVER,
             backoff_initial_ms: DEFAULT_BACKOFF_INITIAL_MS,
             backoff_max_ms: DEFAULT_BACKOFF_MAX_MS,
             command_allowlist: Vec::new(),
@@ -165,6 +206,10 @@ fn format_pcf_addr(addr: &Pcf8574Addr) -> String {
     }
 }
 
+fn format_display_driver(driver: &DisplayDriver) -> String {
+    format!("\"{}\"", driver)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,6 +255,7 @@ mod tests {
             page_timeout_ms = 4500
             button_gpio_pin = 17
             pcf8574_addr = "0x23"
+            display_driver = "hd44780-driver"
             backoff_initial_ms = 750
             backoff_max_ms = 9000
         "#;
@@ -223,6 +269,7 @@ mod tests {
         assert_eq!(cfg.page_timeout_ms, 4500);
         assert_eq!(cfg.button_gpio_pin, Some(17));
         assert_eq!(cfg.pcf8574_addr, Pcf8574Addr::Addr(0x23));
+        assert_eq!(cfg.display_driver, DisplayDriver::Hd44780Driver);
         assert_eq!(cfg.backoff_initial_ms, 750);
         assert_eq!(cfg.backoff_max_ms, 9000);
         let _ = fs::remove_file(path);
@@ -254,6 +301,7 @@ mod tests {
             page_timeout_ms: 4000,
             button_gpio_pin: Some(22),
             pcf8574_addr: Pcf8574Addr::Auto,
+            display_driver: DisplayDriver::InTree,
             backoff_initial_ms: DEFAULT_BACKOFF_INITIAL_MS,
             backoff_max_ms: DEFAULT_BACKOFF_MAX_MS,
             command_allowlist: Vec::new(),

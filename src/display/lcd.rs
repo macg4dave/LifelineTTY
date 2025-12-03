@@ -1,7 +1,7 @@
-use crate::{config::Pcf8574Addr, Error, Result};
+use crate::{config::{DisplayDriver, Pcf8574Addr}, Error, Result};
 
 #[cfg(target_os = "linux")]
-use crate::lcd_driver::{self, pcf8574::RppalBus};
+use crate::lcd_driver::{self, external::ExternalHd44780, pcf8574::RppalBus};
 
 pub const BAR_LEVELS: [char; 6] = ['\u{0}', '\u{1}', '\u{2}', '\u{3}', '\u{4}', '\u{5}'];
 pub const BAR_EMPTY: char = BAR_LEVELS[0];
@@ -10,13 +10,41 @@ pub const HEARTBEAT_CHAR: char = '\u{6}';
 pub const BATTERY_CHAR: char = '\u{7}';
 pub const CGRAM_FREE_CHAR: char = BATTERY_CHAR;
 
+#[cfg(target_os = "linux")]
+const BAR_GLYPHS: [[&str; 8]; 8] = [
+    [
+        "00000", "00000", "00000", "00000", "00000", "00000", "00000", "00000",
+    ],
+    [
+        "10000", "10000", "10000", "10000", "10000", "10000", "10000", "10000",
+    ],
+    [
+        "11000", "11000", "11000", "11000", "11000", "11000", "11000", "11000",
+    ],
+    [
+        "11100", "11100", "11100", "11100", "11100", "11100", "11100", "11100",
+    ],
+    [
+        "11110", "11110", "11110", "11110", "11110", "11110", "11110", "11110",
+    ],
+    [
+        "11111", "11111", "11111", "11111", "11111", "11111", "11111", "11111",
+    ],
+    [
+        "01010", "11111", "11111", "11111", "01110", "00100", "00000", "00000",
+    ],
+    [
+        "11111", "11111", "10001", "10001", "10001", "10001", "11111", "11111",
+    ],
+];
+
 /// LCD facade that drives the HD44780 over I2C on Linux and falls back to a
 /// stub on other platforms (or when hardware init fails).
 pub struct Lcd {
     cols: u8,
     rows: u8,
     #[cfg(target_os = "linux")]
-    driver: lcd_driver::Hd44780<RppalBus>,
+    driver: DriverBackend,
     #[cfg(not(target_os = "linux"))]
     last_lines: (String, String),
     #[cfg(not(target_os = "linux"))]
@@ -28,7 +56,12 @@ pub struct Lcd {
 }
 
 impl Lcd {
-    pub fn new(cols: u8, rows: u8, pcf_addr: Pcf8574Addr) -> Result<Self> {
+    pub fn new(
+        cols: u8,
+        rows: u8,
+        pcf_addr: Pcf8574Addr,
+        display_driver: DisplayDriver,
+    ) -> Result<Self> {
         #[cfg(target_os = "linux")]
         {
             let mut bus = RppalBus::new_default()?;
@@ -41,14 +74,14 @@ impl Lcd {
                 Pcf8574Addr::Addr(a) => a,
             };
             eprintln!("pcf8574 addr: 0x{addr:02x}");
-            let mut driver = lcd_driver::Hd44780::new(bus, addr, cols, rows)?;
-            load_bar_glyphs(&mut driver)?;
+            let mut driver = DriverBackend::new(bus, addr, cols, rows, display_driver)?;
+            driver.load_bar_glyphs()?;
             Ok(Self { cols, rows, driver })
         }
 
         #[cfg(not(target_os = "linux"))]
         {
-            let _ = pcf_addr;
+            let _ = (pcf_addr, display_driver);
             Ok(Self {
                 cols,
                 rows,
@@ -81,11 +114,7 @@ impl Lcd {
     pub fn set_backlight(&mut self, on: bool) -> Result<()> {
         #[cfg(target_os = "linux")]
         {
-            if on {
-                self.driver.backlight_on()
-            } else {
-                self.driver.backlight_off()
-            }
+            self.driver.set_backlight(on)
         }
         #[cfg(not(target_os = "linux"))]
         {
@@ -97,11 +126,7 @@ impl Lcd {
     pub fn set_blink(&mut self, on: bool) -> Result<()> {
         #[cfg(target_os = "linux")]
         {
-            if on {
-                self.driver.blink_cursor_on()
-            } else {
-                self.driver.blink_cursor_off()
-            }
+            self.driver.set_blink(on)
         }
         #[cfg(not(target_os = "linux"))]
         {
@@ -172,36 +197,81 @@ impl Lcd {
 }
 
 #[cfg(target_os = "linux")]
-fn load_bar_glyphs<B: lcd_driver::I2cBus>(driver: &mut lcd_driver::Hd44780<B>) -> Result<()> {
-    // 0-5: progressive bar fill (0 empty -> 5 full), 6: heartbeat, 7: battery
-    let glyphs = [
-        [
-            "00000", "00000", "00000", "00000", "00000", "00000", "00000", "00000",
-        ], // empty
-        [
-            "10000", "10000", "10000", "10000", "10000", "10000", "10000", "10000",
-        ], // 20%
-        [
-            "11000", "11000", "11000", "11000", "11000", "11000", "11000", "11000",
-        ], // 40%
-        [
-            "11100", "11100", "11100", "11100", "11100", "11100", "11100", "11100",
-        ], // 60%
-        [
-            "11110", "11110", "11110", "11110", "11110", "11110", "11110", "11110",
-        ], // 80%
-        [
-            "11111", "11111", "11111", "11111", "11111", "11111", "11111", "11111",
-        ], // 100%
-        [
-            "01010", "11111", "11111", "11111", "01110", "00100", "00000", "00000",
-        ], // heartbeat
-        [
-            "11111", "11111", "10001", "10001", "10001", "10001", "11111", "11111",
-        ], // battery
-    ];
-    driver.load_custom_bitmaps(&glyphs)?;
-    Ok(())
+fn load_bar_glyphs_internal<B: lcd_driver::I2cBus>(driver: &mut lcd_driver::Hd44780<B>) -> Result<()> {
+    driver.load_custom_bitmaps(&BAR_GLYPHS)
+}
+
+#[cfg(target_os = "linux")]
+fn load_bar_glyphs_external(driver: &mut ExternalHd44780) -> Result<()> {
+    driver.load_custom_bitmaps(&BAR_GLYPHS)
+}
+
+#[cfg(target_os = "linux")]
+enum DriverBackend {
+    Internal(lcd_driver::Hd44780<RppalBus>),
+    External(ExternalHd44780),
+}
+
+#[cfg(target_os = "linux")]
+impl DriverBackend {
+    fn new(
+        bus: RppalBus,
+        addr: u8,
+        cols: u8,
+        rows: u8,
+        preference: DisplayDriver,
+    ) -> Result<Self> {
+        match preference {
+            DisplayDriver::Hd44780Driver => {
+                let raw = bus.into_inner();
+                let external = ExternalHd44780::new_from_rppal(raw, addr, cols, rows)?;
+                Ok(DriverBackend::External(external))
+            }
+            DisplayDriver::Auto | DisplayDriver::InTree => {
+                let internal = lcd_driver::Hd44780::new(bus, addr, cols, rows)?;
+                Ok(DriverBackend::Internal(internal))
+            }
+        }
+    }
+
+    fn clear(&mut self) -> Result<()> {
+        match self {
+            DriverBackend::Internal(driver) => driver.clear(),
+            DriverBackend::External(driver) => driver.clear(),
+        }
+    }
+
+    fn set_backlight(&mut self, on: bool) -> Result<()> {
+        match (self, on) {
+            (DriverBackend::Internal(driver), true) => driver.backlight_on(),
+            (DriverBackend::Internal(driver), false) => driver.backlight_off(),
+            (DriverBackend::External(driver), true) => driver.backlight_on(),
+            (DriverBackend::External(driver), false) => driver.backlight_off(),
+        }
+    }
+
+    fn set_blink(&mut self, on: bool) -> Result<()> {
+        match (self, on) {
+            (DriverBackend::Internal(driver), true) => driver.blink_cursor_on(),
+            (DriverBackend::Internal(driver), false) => driver.blink_cursor_off(),
+            (DriverBackend::External(driver), true) => driver.blink_cursor_on(),
+            (DriverBackend::External(driver), false) => driver.blink_cursor_off(),
+        }
+    }
+
+    fn write_line(&mut self, row: u8, text: &str) -> Result<()> {
+        match self {
+            DriverBackend::Internal(driver) => driver.write_line(row, text),
+            DriverBackend::External(driver) => driver.write_line(row, text),
+        }
+    }
+
+    fn load_bar_glyphs(&mut self) -> Result<()> {
+        match self {
+            DriverBackend::Internal(driver) => load_bar_glyphs_internal(driver),
+            DriverBackend::External(driver) => load_bar_glyphs_external(driver),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -215,7 +285,13 @@ mod tests {
     #[test]
     #[ignore]
     fn rejects_out_of_bounds_row() {
-        let mut lcd = Lcd::new(16, 2, crate::config::DEFAULT_PCF8574_ADDR).unwrap();
+        let mut lcd = Lcd::new(
+            16,
+            2,
+            crate::config::DEFAULT_PCF8574_ADDR,
+            crate::config::DEFAULT_DISPLAY_DRIVER,
+        )
+        .unwrap();
         let err = lcd.write_line(2, "oops").unwrap_err();
         assert!(format!("{err}").contains("out of bounds"));
     }
@@ -223,7 +299,13 @@ mod tests {
     #[test]
     #[ignore]
     fn accepts_in_bounds_row() {
-        let mut lcd = Lcd::new(16, 2, crate::config::DEFAULT_PCF8574_ADDR).unwrap();
+        let mut lcd = Lcd::new(
+            16,
+            2,
+            crate::config::DEFAULT_PCF8574_ADDR,
+            crate::config::DEFAULT_DISPLAY_DRIVER,
+        )
+        .unwrap();
         lcd.write_line(1, "ok").unwrap();
     }
 }

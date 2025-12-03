@@ -49,6 +49,7 @@ There is also a short frameworks document that describes the set of skeleton mod
 | **P18** | **Config-driven polling profiles**: allow `profiles` table in `config.toml` to customize polling intervals per metric, validated via tests. |
 | **P19** | **Documentation + sample payload refresh**: update `README.md`, `samples/payload_examples*.json`, and `docs/lcd_patterns.md` showing new modes and tunnels. |
 | **P20 (⚙️ in progress — 4 Dec 2025)** | **Serial transport resilience**: finalize explicit 8N1 + flow-control defaults in code, expose DTR/RTS toggles + timeout knobs via config for upcoming tunnels, and add structured error mapping/logs so reconnect logic can distinguish permission, unplug, and framing failures before Milestones A–C. _(Update: CLI + config now surface flow-control, parity, stop-bits, DTR, and timeout knobs; next up is richer error mapping/logging.)_ |
+| **P21** | **Adopt hd44780-driver crate for Linux builds where possible**: migrate the internal HD44780 driver to use the external `hd44780-driver` crate (via a small adapter for the platform I²C bus) while preserving our public API for any missing functionality. |
 
 ## Crate guidance for roadmap alignment
 
@@ -141,6 +142,25 @@ Update this section or `docs/createstocheck.md` whenever priorities shift so the
   4. Provide demo payloads + tests covering new display modes.
 - **Crates & tooling**: `hd44780-driver`, `linux-embedded-hal`, `rppal` for I²C, `log` for refresh diagnostics.
 
+#### Milestone E.1 — hd44780-driver migration (subtask of Milestone E)
+
+- **Goal**: Adopt the `hd44780-driver` crate for Linux builds in place of our in-tree implementation where appropriate, preserving the public `Lcd` and `lcd_driver::Hd44780` APIs and behavior.
+- **Scope**: `src/lcd_driver/mod.rs`, `src/lcd_driver/pcf8574.rs`, `src/display/lcd.rs`, `src/config/loader.rs`, `README.md`, `docs/lcd_patterns.md`, and tests.
+- **Dependencies**: P4, P12, `rppal`, `linux-embedded-hal`.
+- **Workflow**:
+  1. Add a small I2C adapter that presents a `rppal::i2c::I2c` (or `linux-embedded-hal::I2cdev`) as an `embedded-hal::blocking::i2c::Write` implementation for the `hd44780-driver` crate.
+  2. Add new `Hd44780::new_external(i2c_hal, addr, cols, rows)` and `Lcd::new_with_bus(...)` constructors. Keep old constructors as fallback.
+  3. Implement CGRAM/custom char helpers for the external driver by writing the CGRAM command and pattern bytes through the bus adapter (ensure alignment with the external crate's nibble/4-bit conventions).
+  4. Preserve the `I2cBus` trait for tests and the internal code path; share integration tests that validate parity in output and glyphs.
+  5. Add `--test-lcd` smoke tests and an optional `display.driver: "hd44780-driver" | "in-tree" | "auto"` config value that keeps the default experience unchanged but allows CI/experimental testing.
+  6. Incrementally default to `hd44780-driver` on Linux if all tests pass and hardware scans show consistency for 2 weeks.
+
+- **Acceptance**:
+  - Public `Lcd` facade and CLI remain unchanged.
+  - Feature parity validated (write_line, flicker-free writes, backlight toggle, blink, custom chars) by tests and hardware smoke runs.
+  - Memory and runtime constraints remain within the charter (<5 MB RSS) when the external driver is engaged.
+
+
 ### Milestone F — JSON-Protocol Mode + Payload Compression
 
 - **Goal**: strict JSON schema with optional LZ4/zstd compression for log bursts.
@@ -174,3 +194,56 @@ Update this section or `docs/createstocheck.md` whenever priorities shift so the
 - Close B1–B6, then tackle P1–P4 in order to stabilize the base.
 - Once telemetry + schema groundwork (P5–P13) is stable, schedule milestone A/B builds.
 - Maintain this roadmap alongside `docs/architecture.md` and update when priorities shift (always annotate date + reason).
+
+## Implementation details (P21 — hd44780-driver migration)
+
+This section collects the small, concrete edits and tests for the hd44780-driver adoption; it also serves as a checklist for the developer and reviewer teams.
+
+1. RppalI2cAdapter / I2cdevAdapter
+
+  - File: `src/lcd_driver/pcf8574.rs`
+  - Behavior: implement a small adapter to convert `rppal::i2c::I2c` (or `linux-embedded-hal::I2cdev`) into an `embedded-hal::blocking::i2c::Write` implementation. The adapter must be backlight-aware and preserve the PCF8574 write semantics (set `E`, `RS`/`DATA`, backlight bit).
+
+1. Add Linux-only `Hd44780::new_external`
+
+  - File: `src/lcd_driver/mod.rs`
+  - Behavior: add `Hd44780::new_external(i2c_adapter, addr, cols, rows)` which constructs `hd44780_driver::HD44780` using `new_i2c` and return a compatibility wrapper with `load_custom_bitmaps`, `write_line`, `clear`, `backlight_on/off`, `blink_cursor_on/off` that delegates to either the external crate or the internal implementation.
+
+1. Add `Lcd::new_with_bus(...)`
+
+  - File: `src/display/lcd.rs`
+  - Behavior: add a deterministic constructor that accepts a pre-initialized bus + address and uses the external driver on Linux when selected.
+
+1. Add `display.driver` config option and CLI enablement
+
+  - File: `src/config/loader.rs`, `README.md`.
+  - Values: `auto` (default), `hd44780-driver`, `in-tree`.
+
+1. Preserve CGRAM helpers
+
+  - File: `src/display/lcd.rs`, `src/lcd_driver/mod.rs`.
+  - Behavior: Implement CGRAM/custom char helpers for the external driver by writing the CGRAM write command and the following pattern bytes via the adapter bus.
+
+1. Tests to add
+
+  - unit tests for adapter & mock bus behaviors in `src/lcd_driver/mod.rs` and `src/lcd_driver/pcf8574.rs`.
+  - CGRAM parity tests for both in-tree and external drivers.
+  - Linux-only integration hardware tests for `--test-lcd` (init, write_line, clear, backlight, blink, custom_char, `load_custom_bitmaps`).
+  - `tests/bin_smoke.rs` `display.driver` toggles and verification.
+
+1. Review & acceptance
+
+  - CI passes (tests + clippy + fmt) for both driver paths.
+  - Hardware smoke runs: verify `hd44780-driver` parity for glyphs and backlight.
+  - Multi-panel hardware test verifying graceful degradation.
+
+1. Rollout Plan
+
+  - Start opt-in via `display.driver` config + `--test-lcd`.
+  - Run extended smoke tests for two weeks on hardware before making `auto` default choose the external driver on Linux.
+
+1. Owner & timeline
+
+  - Owner: hardware/driver engineer (TBD).
+  - Estimate: 1–2 weeks split across development, testing, and smoke runs.
+

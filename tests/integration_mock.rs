@@ -20,6 +20,12 @@ fn integration_parses_and_states() {
 #[test]
 #[ignore]
 fn smoke_lcd_write_lines_stub() {
-    let mut lcd = Lcd::new(16, 2, lifelinetty::config::DEFAULT_PCF8574_ADDR).unwrap();
+    let mut lcd = Lcd::new(
+        16,
+        2,
+        lifelinetty::config::DEFAULT_PCF8574_ADDR,
+        lifelinetty::config::DEFAULT_DISPLAY_DRIVER,
+    )
+    .unwrap();
     lcd.write_lines("HELLO", "WORLD").unwrap();
 }

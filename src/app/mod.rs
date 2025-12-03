@@ -2,7 +2,8 @@ use crate::{
     cli::{RunMode, RunOptions},
     config::Pcf8574Addr,
     config::{
-        Config, DEFAULT_BAUD, DEFAULT_COLS, DEFAULT_DEVICE, DEFAULT_ROWS, DEFAULT_SERIAL_TIMEOUT_MS,
+        Config, DisplayDriver, DEFAULT_BAUD, DEFAULT_COLS, DEFAULT_DEVICE, DEFAULT_ROWS,
+        DEFAULT_SERIAL_TIMEOUT_MS,
     },
     lcd::Lcd,
     payload::{Defaults as PayloadDefaults, RenderFrame},
@@ -56,6 +57,7 @@ pub struct AppConfig {
     pub backoff_initial_ms: u64,
     pub backoff_max_ms: u64,
     pub pcf8574_addr: Pcf8574Addr,
+    pub display_driver: DisplayDriver,
     pub log_level: LogLevel,
     pub log_file: Option<String>,
     pub demo: bool,
@@ -82,6 +84,7 @@ impl Default for AppConfig {
             backoff_initial_ms: crate::config::DEFAULT_BACKOFF_INITIAL_MS,
             backoff_max_ms: crate::config::DEFAULT_BACKOFF_MAX_MS,
             pcf8574_addr: crate::config::DEFAULT_PCF8574_ADDR,
+            display_driver: crate::config::DEFAULT_DISPLAY_DRIVER,
             log_level: LogLevel::default(),
             log_file: None,
             demo: false,
@@ -119,7 +122,12 @@ impl App {
             let shell = ShellContext::preview();
             return shell.run();
         }
-        let mut lcd = Lcd::new(config.cols, config.rows, config.pcf8574_addr.clone())?;
+        let mut lcd = Lcd::new(
+            config.cols,
+            config.rows,
+            config.pcf8574_addr.clone(),
+            config.display_driver,
+        )?;
         lcd.render_boot_message()?;
         self.logger.info(format!(
             "daemon start (device={}, baud={}, cols={}, rows={})",
@@ -184,6 +192,7 @@ impl AppConfig {
             pcf8574_addr: opts
                 .pcf8574_addr
                 .unwrap_or_else(|| config.pcf8574_addr.clone()),
+            display_driver: config.display_driver,
             log_level: opts
                 .log_level
                 .as_deref()

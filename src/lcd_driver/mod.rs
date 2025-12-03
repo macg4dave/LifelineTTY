@@ -6,6 +6,7 @@ use std::time::Duration;
 use crate::{Error, Result};
 
 pub mod pcf8574;
+pub mod external;
 
 /// Backlight state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,7 +37,7 @@ const MASK_RS: u8 = 0x01;
 #[allow(dead_code)]
 const MASK_RW: u8 = 0x02;
 const MASK_E: u8 = 0x04;
-const SHIFT_BACKLIGHT: u8 = 3;
+pub(super) const SHIFT_BACKLIGHT: u8 = 3;
 const SHIFT_DATA: u8 = 4;
 
 // Commands (mirrors lcd_api.py).
@@ -51,8 +52,8 @@ const LCD_ON_BLINK: u8 = 0x01;
 const LCD_FUNCTION: u8 = 0x20;
 const LCD_FUNCTION_2LINES: u8 = 0x08;
 const LCD_FUNCTION_RESET: u8 = 0x30;
-const LCD_DDRAM: u8 = 0x80;
-const LCD_CGRAM: u8 = 0x40;
+pub(super) const LCD_DDRAM: u8 = 0x80;
+pub(super) const LCD_CGRAM: u8 = 0x40;
 
 pub const DEFAULT_I2C_ADDR: u8 = 0x27;
 
@@ -296,7 +297,7 @@ fn sleep_us(us: u64) {
     std::thread::sleep(Duration::from_micros(us));
 }
 
-fn from_hex(byte: u8) -> Option<u8> {
+pub(super) fn from_hex(byte: u8) -> Option<u8> {
     match byte {
         b'0'..=b'9' => Some(byte - b'0'),
         b'a'..=b'f' => Some(10 + byte - b'a'),
@@ -305,7 +306,7 @@ fn from_hex(byte: u8) -> Option<u8> {
     }
 }
 
-fn parse_bitmap_row(row: &str) -> Result<u8> {
+pub(super) fn parse_bitmap_row(row: &str) -> Result<u8> {
     if row.len() > 5 {
         return Err(Error::InvalidArgs(
             "bitmap rows must be at most 5 characters".into(),

@@ -4,7 +4,15 @@ use crate::{
 };
 
 #[cfg(target_os = "linux")]
-use crate::lcd_driver::{self, external::ExternalHd44780, pcf8574::RppalBus};
+use crate::lcd_driver::{
+    self,
+    external::ExternalHd44780,
+    pcf8574::{I2cdevBus, RppalBus},
+};
+#[cfg(target_os = "linux")]
+use linux_embedded_hal::I2cdev;
+#[cfg(target_os = "linux")]
+use rppal::i2c::I2c as RppalI2c;
 
 pub const BAR_LEVELS: [char; 6] = ['\u{0}', '\u{1}', '\u{2}', '\u{3}', '\u{4}', '\u{5}'];
 pub const BAR_EMPTY: char = BAR_LEVELS[0];
@@ -41,6 +49,12 @@ const BAR_GLYPHS: [[&str; 8]; 8] = [
     ],
 ];
 
+#[cfg(target_os = "linux")]
+pub enum LcdBus {
+    Rppal(RppalI2c),
+    I2cdev(I2cdev),
+}
+
 /// LCD facade that drives the HD44780 over I2C on Linux and falls back to a
 /// stub on other platforms (or when hardware init fails).
 pub struct Lcd {
@@ -67,17 +81,8 @@ impl Lcd {
     ) -> Result<Self> {
         #[cfg(target_os = "linux")]
         {
-            let mut bus = RppalBus::new_default()?;
-            let addr = match pcf_addr {
-                Pcf8574Addr::Auto => RppalBus::detect_address(
-                    &mut bus,
-                    &[0x27, 0x26, 0x25, 0x24, 0x23, 0x22, 0x21, 0x20],
-                    0x27,
-                ),
-                Pcf8574Addr::Addr(a) => a,
-            };
+            let (mut driver, addr) = DriverBackend::new(cols, rows, pcf_addr, display_driver)?;
             eprintln!("pcf8574 addr: 0x{addr:02x}");
-            let mut driver = DriverBackend::new(bus, addr, cols, rows, display_driver)?;
             driver.load_bar_glyphs()?;
             Ok(Self { cols, rows, driver })
         }
@@ -178,6 +183,34 @@ impl Lcd {
         self.rows
     }
 
+    #[cfg(target_os = "linux")]
+    pub fn new_with_bus(
+        cols: u8,
+        rows: u8,
+        addr: u8,
+        display_driver: DisplayDriver,
+        bus: LcdBus,
+    ) -> Result<Self> {
+        let mut driver = match bus {
+            LcdBus::Rppal(raw) => DriverBackend::from_rppal_bus(
+                RppalBus::from_inner(raw),
+                addr,
+                cols,
+                rows,
+                display_driver,
+            )?,
+            LcdBus::I2cdev(dev) => DriverBackend::from_i2cdev_bus(
+                I2cdevBus::from_inner(dev),
+                addr,
+                cols,
+                rows,
+                display_driver,
+            )?,
+        };
+        driver.load_bar_glyphs()?;
+        Ok(Self { cols, rows, driver })
+    }
+
     #[cfg(not(target_os = "linux"))]
     pub fn last_lines(&self) -> (String, String) {
         self.last_lines.clone()
@@ -213,13 +246,116 @@ fn load_bar_glyphs_external(driver: &mut ExternalHd44780) -> Result<()> {
 
 #[cfg(target_os = "linux")]
 enum DriverBackend {
-    Internal(lcd_driver::Hd44780<RppalBus>),
+    Internal(InternalDriver),
     External(ExternalHd44780),
 }
 
 #[cfg(target_os = "linux")]
+enum InternalDriver {
+    Rppal(lcd_driver::Hd44780<RppalBus>),
+    I2cdev(lcd_driver::Hd44780<I2cdevBus>),
+}
+
+#[cfg(target_os = "linux")]
+impl InternalDriver {
+    fn from_rppal(bus: RppalBus, addr: u8, cols: u8, rows: u8) -> Result<Self> {
+        let driver = lcd_driver::Hd44780::new(bus, addr, cols, rows)?;
+        Ok(Self::Rppal(driver))
+    }
+
+    fn from_i2cdev(bus: I2cdevBus, addr: u8, cols: u8, rows: u8) -> Result<Self> {
+        let driver = lcd_driver::Hd44780::new(bus, addr, cols, rows)?;
+        Ok(Self::I2cdev(driver))
+    }
+
+    fn clear(&mut self) -> Result<()> {
+        match self {
+            InternalDriver::Rppal(driver) => driver.clear(),
+            InternalDriver::I2cdev(driver) => driver.clear(),
+        }
+    }
+
+    fn set_backlight(&mut self, on: bool) -> Result<()> {
+        match self {
+            InternalDriver::Rppal(driver) => {
+                if on {
+                    driver.backlight_on()
+                } else {
+                    driver.backlight_off()
+                }
+            }
+            InternalDriver::I2cdev(driver) => {
+                if on {
+                    driver.backlight_on()
+                } else {
+                    driver.backlight_off()
+                }
+            }
+        }
+    }
+
+    fn set_blink(&mut self, on: bool) -> Result<()> {
+        match self {
+            InternalDriver::Rppal(driver) => {
+                if on {
+                    driver.blink_cursor_on()
+                } else {
+                    driver.blink_cursor_off()
+                }
+            }
+            InternalDriver::I2cdev(driver) => {
+                if on {
+                    driver.blink_cursor_on()
+                } else {
+                    driver.blink_cursor_off()
+                }
+            }
+        }
+    }
+
+    fn write_line(&mut self, row: u8, text: &str) -> Result<()> {
+        match self {
+            InternalDriver::Rppal(driver) => driver.write_line(row, text),
+            InternalDriver::I2cdev(driver) => driver.write_line(row, text),
+        }
+    }
+
+    fn load_bar_glyphs(&mut self) -> Result<()> {
+        match self {
+            InternalDriver::Rppal(driver) => load_bar_glyphs_internal(driver),
+            InternalDriver::I2cdev(driver) => load_bar_glyphs_internal(driver),
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
 impl DriverBackend {
-    fn new(bus: RppalBus, addr: u8, cols: u8, rows: u8, preference: DisplayDriver) -> Result<Self> {
+    fn new(
+        cols: u8,
+        rows: u8,
+        pcf_addr: Pcf8574Addr,
+        preference: DisplayDriver,
+    ) -> Result<(Self, u8)> {
+        let mut bus = RppalBus::new_default()?;
+        let addr = match pcf_addr {
+            Pcf8574Addr::Auto => RppalBus::detect_address(
+                &mut bus,
+                &[0x27, 0x26, 0x25, 0x24, 0x23, 0x22, 0x21, 0x20],
+                0x27,
+            ),
+            Pcf8574Addr::Addr(addr) => addr,
+        };
+        let backend = Self::from_rppal_bus(bus, addr, cols, rows, preference)?;
+        Ok((backend, addr))
+    }
+
+    fn from_rppal_bus(
+        bus: RppalBus,
+        addr: u8,
+        cols: u8,
+        rows: u8,
+        preference: DisplayDriver,
+    ) -> Result<Self> {
         match preference {
             DisplayDriver::Hd44780Driver => {
                 let raw = bus.into_inner();
@@ -227,7 +363,27 @@ impl DriverBackend {
                 Ok(DriverBackend::External(external))
             }
             DisplayDriver::Auto | DisplayDriver::InTree => {
-                let internal = lcd_driver::Hd44780::new(bus, addr, cols, rows)?;
+                let internal = InternalDriver::from_rppal(bus, addr, cols, rows)?;
+                Ok(DriverBackend::Internal(internal))
+            }
+        }
+    }
+
+    fn from_i2cdev_bus(
+        bus: I2cdevBus,
+        addr: u8,
+        cols: u8,
+        rows: u8,
+        preference: DisplayDriver,
+    ) -> Result<Self> {
+        match preference {
+            DisplayDriver::Hd44780Driver => {
+                let raw = bus.into_inner();
+                let external = ExternalHd44780::new_from_i2cdev(raw, addr, cols, rows)?;
+                Ok(DriverBackend::External(external))
+            }
+            DisplayDriver::Auto | DisplayDriver::InTree => {
+                let internal = InternalDriver::from_i2cdev(bus, addr, cols, rows)?;
                 Ok(DriverBackend::Internal(internal))
             }
         }
@@ -242,8 +398,7 @@ impl DriverBackend {
 
     fn set_backlight(&mut self, on: bool) -> Result<()> {
         match (self, on) {
-            (DriverBackend::Internal(driver), true) => driver.backlight_on(),
-            (DriverBackend::Internal(driver), false) => driver.backlight_off(),
+            (DriverBackend::Internal(driver), _) => driver.set_backlight(on),
             (DriverBackend::External(driver), true) => driver.backlight_on(),
             (DriverBackend::External(driver), false) => driver.backlight_off(),
         }
@@ -251,8 +406,7 @@ impl DriverBackend {
 
     fn set_blink(&mut self, on: bool) -> Result<()> {
         match (self, on) {
-            (DriverBackend::Internal(driver), true) => driver.blink_cursor_on(),
-            (DriverBackend::Internal(driver), false) => driver.blink_cursor_off(),
+            (DriverBackend::Internal(driver), _) => driver.set_blink(on),
             (DriverBackend::External(driver), true) => driver.blink_cursor_on(),
             (DriverBackend::External(driver), false) => driver.blink_cursor_off(),
         }
@@ -267,7 +421,7 @@ impl DriverBackend {
 
     fn load_bar_glyphs(&mut self) -> Result<()> {
         match self {
-            DriverBackend::Internal(driver) => load_bar_glyphs_internal(driver),
+            DriverBackend::Internal(driver) => driver.load_bar_glyphs(),
             DriverBackend::External(driver) => load_bar_glyphs_external(driver),
         }
     }

@@ -280,6 +280,7 @@ mod tests {
             backoff_initial_ms: crate::config::DEFAULT_BACKOFF_INITIAL_MS,
             backoff_max_ms: crate::config::DEFAULT_BACKOFF_MAX_MS,
             pcf8574_addr: crate::config::DEFAULT_PCF8574_ADDR,
+            display_driver: crate::config::DEFAULT_DISPLAY_DRIVER,
             command_allowlist: Vec::new(),
         };
         let opts = RunOptions::default();

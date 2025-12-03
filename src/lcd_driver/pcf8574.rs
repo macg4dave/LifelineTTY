@@ -1,8 +1,17 @@
 use crate::{lcd_driver::I2cBus, Error, Result};
+#[cfg(target_os = "linux")]
+use embedded_hal_1::i2c::I2c as _;
+#[cfg(target_os = "linux")]
+use std::path::Path;
 
 #[cfg(target_os = "linux")]
 pub(crate) fn map_i2c_err(err: rppal::i2c::Error) -> Error {
     // Wrap rppal errors so the caller sees a standard IO error payload.
+    Error::Io(std::io::Error::other(err.to_string()))
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn map_i2cdev_err(err: linux_embedded_hal::i2cdev::linux::LinuxI2CError) -> Error {
     Error::Io(std::io::Error::other(err.to_string()))
 }
 
@@ -18,6 +27,10 @@ impl RppalBus {
     pub fn new_default() -> Result<Self> {
         let inner = rppal::i2c::I2c::new().map_err(map_i2c_err)?;
         Ok(Self { inner })
+    }
+
+    pub fn from_inner(inner: rppal::i2c::I2c) -> Self {
+        Self { inner }
     }
 
     /// Open a specific bus by number (e.g., bus 1 => /dev/i2c-1).
@@ -54,6 +67,46 @@ impl I2cBus for RppalBus {
             .set_slave_address(addr.into())
             .map_err(map_i2c_err)?;
         self.inner.block_write(byte, &[]).map_err(map_i2c_err)
+    }
+}
+
+/// Linux `I2cdev` implementation so non-Raspberry Pi hosts can exercise the LCD path.
+#[cfg(target_os = "linux")]
+pub struct I2cdevBus {
+    inner: linux_embedded_hal::I2cdev,
+}
+
+#[cfg(target_os = "linux")]
+impl I2cdevBus {
+    pub fn from_path(path: impl AsRef<Path>) -> Result<Self> {
+        let inner = linux_embedded_hal::I2cdev::new(path).map_err(map_i2cdev_err)?;
+        Ok(Self { inner })
+    }
+
+    pub fn from_inner(inner: linux_embedded_hal::I2cdev) -> Self {
+        Self { inner }
+    }
+
+    pub fn into_inner(self) -> linux_embedded_hal::I2cdev {
+        self.inner
+    }
+
+    pub fn detect_address(&mut self, candidates: &[u8], fallback: u8) -> u8 {
+        for &addr in candidates {
+            if self.inner.write(addr.into(), &[0]).is_ok() {
+                return addr;
+            }
+        }
+        fallback
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl I2cBus for I2cdevBus {
+    fn write_byte(&mut self, addr: u8, byte: u8) -> Result<()> {
+        self.inner
+            .write(addr.into(), &[byte])
+            .map_err(map_i2cdev_err)
     }
 }
 

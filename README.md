@@ -206,10 +206,15 @@ rows = 4
 scroll_speed_ms = 250
 page_timeout_ms = 4000
 pcf8574_addr = "auto"
+display_driver = "auto"
 button_gpio_pin = null
 backoff_initial_ms = 500
 backoff_max_ms = 10000
 ```
+
+Use `display_driver = "auto"` (default) to stick with the in-tree PCF8574 driver until the
+hd44780-driver rollout finishes. Set it to `"hd44780-driver"` to force the external crate on
+Linux builds or `"in-tree"` to explicitly keep the legacy path for troubleshooting.
 
 Advanced serial knobs — `flow_control`, `parity`, `stop_bits`, `dtr_on_open`, and
 `serial_timeout_ms` — mirror the CLI flags below so you can keep everything at

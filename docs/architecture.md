@@ -9,6 +9,11 @@ Goal: a small daemon that converts local status into LCD lines over a serial lin
 - Serial (`src/serial.rs`): placeholder for UART transport; will frame and send bytes to the LCD controller or bridge MCU.
 - LCD (`src/lcd.rs`): placeholder for line/row writes and boot messages; will translate text into controller commands.
 - Config (`src/config.rs`): loads `~/.serial_lcd/config.toml`, merges with CLI overrides, and validates ranges (cols 8–40, rows 1–4, scroll ≥100 ms, page timeout ≥500 ms).
+- Display driver selection: `display_driver` in the config toggles between the legacy in-tree
+  PCF8574 helper (`in-tree`/`auto`) and the new `hd44780-driver` crate (`hd44780-driver`).
+- Hardware adapters: `Lcd::new_with_bus` accepts an already-opened `rppal::i2c::I2c` or
+  `linux-embedded-hal::I2cdev` handle so tests and hardware harnesses can force a specific bus
+  without relying on auto-detection.
 
 ## Invariants to keep
 

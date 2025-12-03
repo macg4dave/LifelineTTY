@@ -8,9 +8,9 @@ use {
     embedded_hal::blocking::{delay::DelayUs, i2c::Write},
     hd44780_driver::{
         bus::{DataBus, I2CBus},
-        display_mode::{Cursor, CursorBlink, Display},
-        HD44780,
+        Cursor, CursorBlink, HD44780,
     },
+    linux_embedded_hal::I2cdev,
     std::{
         sync::{Arc, Mutex},
         thread,
@@ -36,7 +36,15 @@ pub struct ExternalHd44780;
 #[cfg(target_os = "linux")]
 impl ExternalHd44780 {
     pub fn new_from_rppal(bus: rppal::i2c::I2c, addr: u8, cols: u8, rows: u8) -> Result<Self> {
-        let state = Arc::new(Mutex::new(AdapterState::new(bus)));
+        Self::new_with_state(AdapterState::new_rppal(bus), addr, cols, rows)
+    }
+
+    pub fn new_from_i2cdev(bus: I2cdev, addr: u8, cols: u8, rows: u8) -> Result<Self> {
+        Self::new_with_state(AdapterState::new_i2cdev(bus), addr, cols, rows)
+    }
+
+    fn new_with_state(state: AdapterState, addr: u8, cols: u8, rows: u8) -> Result<Self> {
+        let state = Arc::new(Mutex::new(state));
         let mut delay = ThreadDelay;
         let adapter = BacklightAwareAdapter::from_state(state.clone());
         let inner = HD44780::new_i2c(adapter, addr, &mut delay).map_err(map_hd_error)?;
@@ -244,15 +252,11 @@ impl BacklightAwareAdapter {
 impl Write for BacklightAwareAdapter {
     type Error = Error;
 
-    fn write(&mut self, addr: u8, bytes: &[u8]) -> Result<(), Self::Error> {
+    fn write(&mut self, addr: u8, bytes: &[u8]) -> std::result::Result<(), Self::Error> {
         let mut guard = self
             .state
             .lock()
             .map_err(|_| Error::Io(std::io::Error::other("i2c mutex poisoned")))?;
-        guard
-            .bus
-            .set_slave_address(addr.into())
-            .map_err(pcf8574::map_i2c_err)?;
         if bytes.is_empty() {
             return Ok(());
         }
@@ -261,27 +265,89 @@ impl Write for BacklightAwareAdapter {
         for &byte in bytes {
             buffer.push((byte & !(1 << super::SHIFT_BACKLIGHT)) | mask);
         }
-        let (first, rest) = buffer.split_first().unwrap();
-        guard
-            .bus
-            .block_write(*first, rest)
-            .map_err(pcf8574::map_i2c_err)
+        guard.write(addr, &buffer)
     }
 }
 
 #[cfg(target_os = "linux")]
+enum AdapterBackend {
+    Rppal(rppal::i2c::I2c),
+    I2cdev(I2cdev),
+    #[cfg(test)]
+    Mock(MockBackend),
+}
+
+#[cfg(target_os = "linux")]
 struct AdapterState {
-    bus: rppal::i2c::I2c,
+    backend: AdapterBackend,
     backlight_on: bool,
 }
 
 #[cfg(target_os = "linux")]
 impl AdapterState {
-    fn new(bus: rppal::i2c::I2c) -> Self {
+    fn new_rppal(bus: rppal::i2c::I2c) -> Self {
         Self {
-            bus,
+            backend: AdapterBackend::Rppal(bus),
             backlight_on: true,
         }
+    }
+
+    fn new_i2cdev(bus: I2cdev) -> Self {
+        Self {
+            backend: AdapterBackend::I2cdev(bus),
+            backlight_on: true,
+        }
+    }
+
+    #[cfg(test)]
+    fn new_mock(mock: MockBackend) -> Self {
+        Self {
+            backend: AdapterBackend::Mock(mock),
+            backlight_on: true,
+        }
+    }
+
+    fn write(&mut self, addr: u8, bytes: &[u8]) -> Result<()> {
+        match &mut self.backend {
+            AdapterBackend::Rppal(bus) => {
+                bus.set_slave_address(addr.into())
+                    .map_err(pcf8574::map_i2c_err)?;
+                let (first, rest) = bytes.split_first().unwrap();
+                bus.block_write(*first, rest).map_err(pcf8574::map_i2c_err)
+            }
+            AdapterBackend::I2cdev(dev) => {
+                <I2cdev as embedded_hal::blocking::i2c::Write>::write(dev, addr.into(), bytes)
+                    .map_err(pcf8574::map_i2cdev_err)
+            }
+            #[cfg(test)]
+            AdapterBackend::Mock(mock) => mock.write(addr, bytes),
+        }
+    }
+
+    #[cfg(test)]
+    fn take_mock_writes(&mut self) -> Vec<(u8, Vec<u8>)> {
+        match &mut self.backend {
+            AdapterBackend::Mock(mock) => mock.take_writes(),
+            _ => Vec::new(),
+        }
+    }
+}
+
+#[cfg(test)]
+#[derive(Default, Clone)]
+struct MockBackend {
+    writes: Vec<(u8, Vec<u8>)>,
+}
+
+#[cfg(test)]
+impl MockBackend {
+    fn write(&mut self, addr: u8, bytes: &[u8]) -> Result<()> {
+        self.writes.push((addr, bytes.to_vec()));
+        Ok(())
+    }
+
+    fn take_writes(&mut self) -> Vec<(u8, Vec<u8>)> {
+        std::mem::take(&mut self.writes)
     }
 }
 
@@ -305,4 +371,38 @@ impl embedded_hal::blocking::delay::DelayMs<u8> for ThreadDelay {
 #[cfg(target_os = "linux")]
 fn map_hd_error(_err: hd44780_driver::error::Error) -> Error {
     Error::Io(std::io::Error::other("hd44780-driver error"))
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn adapter_sets_backlight_bit_when_on() {
+        let state = Arc::new(Mutex::new(AdapterState::new_mock(MockBackend::default())));
+        state.lock().unwrap().backlight_on = true;
+        let mut adapter = BacklightAwareAdapter::from_state(state.clone());
+        adapter.write(0x27, &[0x00]).unwrap();
+        let mut guard = state.lock().unwrap();
+        let writes = guard.take_mock_writes();
+        assert_eq!(writes.len(), 1);
+        assert_eq!(writes[0].0, 0x27);
+        assert!(writes[0].1[0] & (1 << crate::lcd_driver::SHIFT_BACKLIGHT) != 0);
+    }
+
+    #[test]
+    fn adapter_clears_backlight_bit_when_off() {
+        let state = Arc::new(Mutex::new(AdapterState::new_mock(MockBackend::default())));
+        state.lock().unwrap().backlight_on = false;
+        let mut adapter = BacklightAwareAdapter::from_state(state.clone());
+        adapter.write(0x27, &[0xFF]).unwrap();
+        let mut guard = state.lock().unwrap();
+        let writes = guard.take_mock_writes();
+        assert_eq!(writes.len(), 1);
+        assert_eq!(writes[0].0, 0x27);
+        assert_eq!(
+            writes[0].1[0] & (1 << crate::lcd_driver::SHIFT_BACKLIGHT),
+            0
+        );
+    }
 }

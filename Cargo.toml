@@ -21,8 +21,10 @@ clap_complete = "4.5.61"
 crossbeam = "0.8.4"
 directories = "6.0.0"
 futures = { version = "0.3.31", default-features = false }
-hd44780-driver = "0.4"
 humantime = "2.3.0"
+hd44780-driver = "0.4"
+embedded-hal = "0.2.7"
+embedded-hal-1 = { package = "embedded-hal", version = "1.0" }
 indicatif = "0.18.3"
 os_info = "3.13.0"
 rustix = "1.1.2"

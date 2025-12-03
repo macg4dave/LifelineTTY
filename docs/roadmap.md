@@ -47,8 +47,8 @@ There is also a short frameworks document that describes the set of skeleton mod
 | **P17** | **Remote file integrity tooling**: CLI helper to verify checksums and list staged chunks in `/run/serial_lcd_cache`. |
 | **P19** | **Documentation + sample payload refresh**: update `README.md`, `samples/payload_examples*.json`, and `docs/lcd_patterns.md` showing new modes and tunnels. |
 | **P20 (⚙️ in progress — 4 Dec 2025)** | **Serial transport resilience**: finalize explicit 8N1 + flow-control defaults in code, expose DTR/RTS toggles + timeout knobs via config for upcoming tunnels, and add structured error mapping/logs so reconnect logic can distinguish permission, unplug, and framing failures before Milestones A–C. _(Update: CLI + config now surface flow-control, parity, stop-bits, DTR, and timeout knobs; next up is richer error mapping/logging.)_ |
-| **P21** | **Adopt hd44780-driver crate for Linux builds where possible**: migrate the internal HD44780 driver to use the external `hd44780-driver` crate (via a small adapter for the platform I²C bus) while preserving our public API for any missing functionality. |
-| **P22** | **Custom character support and built in icons**: Add full HD44780 custom-character handling, including a built-in icon set and an API to load/swap glyph banks at runtime.
+| **P21 (✅ 3 Dec 2025)** | **Adopt hd44780-driver crate for Linux builds where possible**: migrate the internal HD44780 driver to use the external `hd44780-driver` crate (via a small adapter for the platform I²C bus) while preserving our public API for any missing functionality. |
+| **P22** | **Custom character support and built in icons**: Add full HD44780 custom-character handling, including a built-in icon set and an API to load/swap glyph banks at runtime. _See Milestone H for execution details._ |
 
 ## Crate guidance for roadmap alignment
 
@@ -186,6 +186,19 @@ Update this section or `docs/createstocheck.md` whenever priorities shift so the
   4. Add doc section + integration tests verifying exit codes and error handling.
 - **Crates & tooling**: `clap`-style parsing currently in tree (custom), consider `rustyline` alternative only if allowed; otherwise use `std::io` for line editing; `ctrlc` (already dependency) for signal handling.
 
+### Milestone H — Custom Character Toolkit & Icon Library
+
+- **Goal**: Provide a curated icon registry plus runtime CGRAM bank manager so payload authors can reference semantic icon names instead of hex bitmaps.
+- **Scope**: `src/payload/icons.rs`, `src/display/lcd.rs`, `src/app/render_loop.rs`, `src/config/loader.rs`, `docs/icon_library.md`, `samples/payload_examples.json`, and `tests/*`.
+- **Dependencies**: P22 (custom characters) with supporting helpers from P21 (hd44780-driver CGRAM plumbing).
+- **Constraints**: Respect 8-slot CGRAM limit, <5 MB RSS, keep icon assets embedded in the binary or config; logging/cache writes stay inside `/run/serial_lcd_cache`.
+- **Workflow**:
+  1. Import the public-domain glyphs from `duinoWitchery/hd44780` into a Rust icon registry plus a Markdown catalog with attribution.
+  2. Build a CGRAM bank manager that stages icons ahead of each render pass, reuses existing slots, and falls back predictably when >8 glyphs requested.
+  3. Extend payload/config schema so frames can request icons by name (or inline bitmaps) while validation enforces slot limits.
+  4. Add tests + demos covering icon churn, slot eviction, and failure cases; refresh docs/samples so operators can opt in confidently.
+- **Crates & tooling**: no new crates; reuse `hd44780-driver`, `linux-embedded-hal`, `rppal`, `serde`, existing logging utilities. Detailed plan lives in `docs/milestone_h.md`.
+
 ---
 
 ### Tracking & next steps
@@ -198,51 +211,53 @@ Update this section or `docs/createstocheck.md` whenever priorities shift so the
 
 This section collects the small, concrete edits and tests for the hd44780-driver adoption; it also serves as a checklist for the developer and reviewer teams.
 
+_Status (3 Dec 2025): The shared adapter now supports both rppal and linux-embedded-hal buses, `display.driver` is user-configurable, and `Lcd::new_with_bus` exists for hardware smoke harnesses._
+
 1. RppalI2cAdapter / I2cdevAdapter
 
-  - File: `src/lcd_driver/pcf8574.rs`
-  - Behavior: implement a small adapter to convert `rppal::i2c::I2c` (or `linux-embedded-hal::I2cdev`) into an `embedded-hal::blocking::i2c::Write` implementation. The adapter must be backlight-aware and preserve the PCF8574 write semantics (set `E`, `RS`/`DATA`, backlight bit).
+    - File: `src/lcd_driver/pcf8574.rs`
+    - Behavior: implement a small adapter to convert `rppal::i2c::I2c` (or `linux-embedded-hal::I2cdev`) into an `embedded-hal::blocking::i2c::Write` implementation. The adapter must be backlight-aware and preserve the PCF8574 write semantics (set `E`, `RS`/`DATA`, backlight bit).
 
 1. Add Linux-only `Hd44780::new_external`
 
-  - File: `src/lcd_driver/mod.rs`
-  - Behavior: add `Hd44780::new_external(i2c_adapter, addr, cols, rows)` which constructs `hd44780_driver::HD44780` using `new_i2c` and return a compatibility wrapper with `load_custom_bitmaps`, `write_line`, `clear`, `backlight_on/off`, `blink_cursor_on/off` that delegates to either the external crate or the internal implementation.
+    - File: `src/lcd_driver/mod.rs`
+    - Behavior: add `Hd44780::new_external(i2c_adapter, addr, cols, rows)` which constructs `hd44780_driver::HD44780` using `new_i2c` and return a compatibility wrapper with `load_custom_bitmaps`, `write_line`, `clear`, `backlight_on/off`, `blink_cursor_on/off` that delegates to either the external crate or the internal implementation.
 
 1. Add `Lcd::new_with_bus(...)`
 
-  - File: `src/display/lcd.rs`
-  - Behavior: add a deterministic constructor that accepts a pre-initialized bus + address and uses the external driver on Linux when selected.
+    - File: `src/display/lcd.rs`
+    - Behavior: add a deterministic constructor that accepts a pre-initialized bus + address and uses the external driver on Linux when selected.
 
 1. Add `display.driver` config option and CLI enablement
 
-  - File: `src/config/loader.rs`, `README.md`.
-  - Values: `auto` (default), `hd44780-driver`, `in-tree`.
+    - File: `src/config/loader.rs`, `README.md`.
+    - Values: `auto` (default), `hd44780-driver`, `in-tree`.
 
 1. Preserve CGRAM helpers
 
-  - File: `src/display/lcd.rs`, `src/lcd_driver/mod.rs`.
-  - Behavior: Implement CGRAM/custom char helpers for the external driver by writing the CGRAM write command and the following pattern bytes via the adapter bus.
+    - File: `src/display/lcd.rs`, `src/lcd_driver/mod.rs`.
+    - Behavior: Implement CGRAM/custom char helpers for the external driver by writing the CGRAM write command and the following pattern bytes via the adapter bus.
 
 1. Tests to add
 
-  - unit tests for adapter & mock bus behaviors in `src/lcd_driver/mod.rs` and `src/lcd_driver/pcf8574.rs`.
-  - CGRAM parity tests for both in-tree and external drivers.
-  - Linux-only integration hardware tests for `--test-lcd` (init, write_line, clear, backlight, blink, custom_char, `load_custom_bitmaps`).
-  - `tests/bin_smoke.rs` `display.driver` toggles and verification.
+    - unit tests for adapter & mock bus behaviors in `src/lcd_driver/mod.rs` and `src/lcd_driver/pcf8574.rs`.
+    - CGRAM parity tests for both in-tree and external drivers.
+    - Linux-only integration hardware tests for `--test-lcd` (init, write_line, clear, backlight, blink, custom_char, `load_custom_bitmaps`).
+    - `tests/bin_smoke.rs` `display.driver` toggles and verification.
 
 1. Review & acceptance
 
-  - CI passes (tests + clippy + fmt) for both driver paths.
-  - Hardware smoke runs: verify `hd44780-driver` parity for glyphs and backlight.
-  - Multi-panel hardware test verifying graceful degradation.
+    - CI passes (tests + clippy + fmt) for both driver paths.
+    - Hardware smoke runs: verify `hd44780-driver` parity for glyphs and backlight.
+    - Multi-panel hardware test verifying graceful degradation.
 
 1. Rollout Plan
 
-  - Start opt-in via `display.driver` config + `--test-lcd`.
-  - Run extended smoke tests for two weeks on hardware before making `auto` default choose the external driver on Linux.
+    - Start opt-in via `display.driver` config + `--test-lcd`.
+    - Run extended smoke tests for two weeks on hardware before making `auto` default choose the external driver on Linux.
 
 1. Owner & timeline
 
-  - Owner: hardware/driver engineer (TBD).
-  - Estimate: 1–2 weeks split across development, testing, and smoke runs.
+    - Owner: hardware/driver engineer (TBD).
+    - Estimate: 1–2 weeks split across development, testing, and smoke runs.
 

@@ -12,6 +12,7 @@ This document summarizes the crates currently listed in `Cargo.toml`, how we use
 | `crossbeam` | Concurrency utilities (channels, scoped threads). | Future-ready replacement for `std::sync::mpsc` when we juggle polling + rendering + tunnels. | P11 (telemetry) and Milestone D. |
 | `ctrlc` | Signal handling helper. | Clean shutdown hooks in CLI tools or serial shell, forwarding Ctrl+C to tunnels. | Milestone G (serialsh) and overall daemon lifecycle. |
 | `directories` | Cross-platform config/cache directory discovery. | Ensures helper tools respect `~/.serial_lcd` and `/run/serial_lcd_cache` paths. | B3/P4 (config policy) and P16 features storing history. |
+| `embedded-hal` | Common HAL traits for drivers. | Shared interface for the hd44780-driver adapter+mock bus implementations. | P21 display driver integration. |
 | `futures` | Core async primitives/combinators. | Building async-aware tunnel readers/writers without full `tokio`. | P8 / Milestone A (command tunnel). |
 | `hd44780-driver` | HD44780 LCD control. | Direct communication with the LCD via I²C backpack. | Core app display updates (all milestones). |
 | `humantime` | Parse/format human-friendly durations. | CLI/config parsing for heartbeat, polling intervals, logging. | P15 / Milestone D (heartbeat). |

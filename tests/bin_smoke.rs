@@ -1,7 +1,7 @@
 use lifelinetty::{
     app::{App, AppConfig},
     cli::{Command, RunOptions},
-    config::Config,
+    config::{Config, DisplayDriver},
     payload::{Defaults as PayloadDefaults, RenderFrame},
 };
 use std::{
@@ -167,5 +167,20 @@ baud = 9600
         let merged = AppConfig::from_sources(cfg, opts);
         assert_eq!(merged.device, "/dev/ttyS1");
         assert_eq!(merged.baud, 19_200);
+    });
+}
+
+#[test]
+fn config_allows_display_driver_selection() {
+    with_temp_home(|home| {
+        write_config(
+            home,
+            r#"
+device = "/dev/ttyUSB0"
+display_driver = "hd44780-driver"
+        "#,
+        );
+        let cfg = Config::load_or_default().expect("config load failed");
+        assert_eq!(cfg.display_driver, DisplayDriver::Hd44780Driver);
     });
 }

@@ -1,4 +1,4 @@
-use crate::{Error, Result};
+use crate::Result;
 
 /// Negotiation/handshake skeleton for Milestone B / P9
 /// This module defines a minimal capability bitmap and a small state machine

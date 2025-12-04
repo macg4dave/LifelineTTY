@@ -54,7 +54,9 @@ cols = {}\n\
 rows = {}\n\
 scroll_speed_ms = {}\n\
 page_timeout_ms = {}\n\
-button_gpio_pin = {}\n\
+    polling_enabled = {}\n\
+    poll_interval_ms = {}\n\
+    button_gpio_pin = {}\n\
 pcf8574_addr = {}\n\
 display_driver = {}\n\
 backoff_initial_ms = {}\n\
@@ -74,6 +76,8 @@ timeout_ms = {}\n",
         config.rows,
         config.scroll_speed_ms,
         config.page_timeout_ms,
+            config.polling_enabled,
+            config.poll_interval_ms,
         config
             .button_gpio_pin
             .map(|p| p.to_string())
@@ -170,6 +174,16 @@ pub fn parse(raw: &str) -> Result<Config> {
             "page_timeout_ms" => {
                 cfg.page_timeout_ms = value.parse().map_err(|_| {
                     Error::InvalidArgs(format!("invalid page_timeout_ms on line {}", idx + 1))
+                })?;
+            }
+            "polling_enabled" => {
+                cfg.polling_enabled = value.parse().map_err(|_| {
+                    Error::InvalidArgs(format!("invalid polling_enabled on line {}", idx + 1))
+                })?;
+            }
+            "poll_interval_ms" => {
+                cfg.poll_interval_ms = value.parse().map_err(|_| {
+                    Error::InvalidArgs(format!("invalid poll_interval_ms on line {}", idx + 1))
                 })?;
             }
             "pcf8574_addr" => {
@@ -356,6 +370,8 @@ mod tests {
             rows = 2
             scroll_speed_ms = 300
             page_timeout_ms = 4500
+            polling_enabled = true
+            poll_interval_ms = 2500
             button_gpio_pin = 17
             pcf8574_addr = "0x23"
             display_driver = "in-tree"
@@ -375,6 +391,8 @@ mod tests {
         assert_eq!(cfg.rows, 2);
         assert_eq!(cfg.scroll_speed_ms, 300);
         assert_eq!(cfg.page_timeout_ms, 4500);
+        assert!(cfg.polling_enabled);
+        assert_eq!(cfg.poll_interval_ms, 2500);
         assert_eq!(cfg.button_gpio_pin, Some(17));
         assert_eq!(cfg.pcf8574_addr, Pcf8574Addr::Addr(0x23));
         assert_eq!(cfg.display_driver, DisplayDriver::InTree);
@@ -425,6 +443,8 @@ mod tests {
             rows: 4,
             scroll_speed_ms: 250,
             page_timeout_ms: 4000,
+            polling_enabled: true,
+            poll_interval_ms: 2000,
             button_gpio_pin: Some(22),
             pcf8574_addr: Pcf8574Addr::Auto,
             display_driver: DisplayDriver::Hd44780Driver,

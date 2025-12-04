@@ -25,6 +25,8 @@ These skeletons are intentionally small but test-covered so downstream work can:
 - Write integration tests once APIs stabilize.
 - Avoid churn by following the roadmap guardrails (no writing outside CACHE_DIR, no network sockets).
 
+The polling skeleton already wires up `systemstat` for CPU/memory/disk/temperature snapshots, so keep this dependency in sync with `Cargo.toml` and the roadmap notes whenever the metric surface expands.
+
 How to expand
 
 1. Pick a skeleton and implement real behaviour with matching unit + integration tests, starting with Milestone B’s negotiation state machines and fallback wiring.

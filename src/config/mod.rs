@@ -21,6 +21,10 @@ pub const DEFAULT_SCROLL_MS: u64 = 250;
 pub const DEFAULT_PAGE_TIMEOUT_MS: u64 = 4000;
 pub const MIN_SCROLL_MS: u64 = 100;
 pub const MIN_PAGE_TIMEOUT_MS: u64 = 500;
+pub const DEFAULT_POLLING_ENABLED: bool = false;
+pub const DEFAULT_POLL_INTERVAL_MS: u64 = 5000;
+pub const MIN_POLL_INTERVAL_MS: u64 = 1000;
+pub const MAX_POLL_INTERVAL_MS: u64 = 60000;
 pub const DEFAULT_PCF8574_ADDR: Pcf8574Addr = Pcf8574Addr::Auto;
 pub const DEFAULT_DISPLAY_DRIVER: DisplayDriver = DisplayDriver::Auto;
 pub const DEFAULT_BACKOFF_INITIAL_MS: u64 = 500;
@@ -120,6 +124,8 @@ pub struct Config {
     pub rows: u8,
     pub scroll_speed_ms: u64,
     pub page_timeout_ms: u64,
+    pub polling_enabled: bool,
+    pub poll_interval_ms: u64,
     pub button_gpio_pin: Option<u8>,
     pub pcf8574_addr: Pcf8574Addr,
     pub display_driver: DisplayDriver,
@@ -143,6 +149,8 @@ impl Default for Config {
             rows: DEFAULT_ROWS,
             scroll_speed_ms: DEFAULT_SCROLL_MS,
             page_timeout_ms: DEFAULT_PAGE_TIMEOUT_MS,
+            polling_enabled: DEFAULT_POLLING_ENABLED,
+            poll_interval_ms: DEFAULT_POLL_INTERVAL_MS,
             button_gpio_pin: None,
             pcf8574_addr: DEFAULT_PCF8574_ADDR,
             display_driver: DEFAULT_DISPLAY_DRIVER,
@@ -208,6 +216,11 @@ pub(crate) fn validate(cfg: &Config) -> Result<()> {
     if cfg.page_timeout_ms < MIN_PAGE_TIMEOUT_MS {
         return Err(Error::InvalidArgs(format!(
             "page_timeout_ms must be at least {MIN_PAGE_TIMEOUT_MS}"
+        )));
+    }
+    if cfg.poll_interval_ms < MIN_POLL_INTERVAL_MS || cfg.poll_interval_ms > MAX_POLL_INTERVAL_MS {
+        return Err(Error::InvalidArgs(format!(
+            "poll_interval_ms must be between {MIN_POLL_INTERVAL_MS} and {MAX_POLL_INTERVAL_MS}"
         )));
     }
     for entry in &cfg.command_allowlist {
@@ -297,6 +310,8 @@ mod tests {
             rows = 2
             scroll_speed_ms = 300
             page_timeout_ms = 4500
+            polling_enabled = true
+            poll_interval_ms = 2000
             button_gpio_pin = 17
             pcf8574_addr = "0x23"
             display_driver = "hd44780-driver"
@@ -311,6 +326,8 @@ mod tests {
         assert_eq!(cfg.rows, 2);
         assert_eq!(cfg.scroll_speed_ms, 300);
         assert_eq!(cfg.page_timeout_ms, 4500);
+        assert!(cfg.polling_enabled);
+        assert_eq!(cfg.poll_interval_ms, 2000);
         assert_eq!(cfg.button_gpio_pin, Some(17));
         assert_eq!(cfg.pcf8574_addr, Pcf8574Addr::Addr(0x23));
         assert_eq!(cfg.display_driver, DisplayDriver::Hd44780Driver);
@@ -343,6 +360,8 @@ mod tests {
             rows: 4,
             scroll_speed_ms: 250,
             page_timeout_ms: 4000,
+            polling_enabled: true,
+            poll_interval_ms: 2000,
             button_gpio_pin: Some(22),
             pcf8574_addr: Pcf8574Addr::Auto,
             display_driver: DisplayDriver::InTree,

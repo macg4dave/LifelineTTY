@@ -93,6 +93,7 @@ The crates listed here come from `docs/creates_to_check.md`. Each is rated for t
 | `os_info` | P11 / Milestone D | Provides host OS/arch metadata for polling and telemetry packets to aid debugging on the ARMv6 targets. |
 | `crossbeam` | P11 / Milestone D | Scoped threads and channels that prevent the polling/render/serial lanes from blocking one another as telemetry work grows. |
 | `rustix` | P8 / Milestone A | Safe wrappers for low-level ioctls/termios so serial port tweaks or PTY-style helpers stay within the charter. |
+| `systemstat` | P11 / Milestone D | Lightweight CPU/memory/disk/temperature snapshots for the polling skeleton so metrics stay under the RSS and cache budgets. |
 | `sysinfo` | P11 / Milestone D | CPU/memory/disk snapshots for the polling subsystem while respecting the `<5 MB RSS` constraint. |
 | `futures` | P8 / Milestone A | Combinators and stream helpers when we need async-aware state machines for command tunnels or serial shell output streams. |
 | `directories` | B3 / P4 | Canonicalizes `~/.serial_lcd` and cache paths so config/history helpers never wander outside the allowed directories. |
@@ -139,18 +140,6 @@ The previously cited plan items are now satisfied: the executor handles Busy/Exi
   4. Document expected behavior and add integration tests with fake serial endpoints (`tests/fake_serial_loop.rs`).
 - **Crates & tooling**: `serialport`, `tokio` (for async timeout), `anyhow`/`thiserror` for richer negotiation errors, `log` for trace-level negotiation logging.
 
-### Milestone C — Remote File Push/Pull
-
-- **Goal**: send logs/configs/binaries via UART with chunking, checksum, resume.
-- **Scope**: new transport module (`src/app/events.rs` extensions), cache utilization under `/run/serial_lcd_cache`, CLI helpers for send/recv.
-- **Dependencies**: P10, P17, P13 (schema). Requires compression milestone (E) for large transfers.
-- **Constraints**: never write outside RAM disk except when user explicitly moves file into `~/.serial_lcd/` config path.
-- **Workflow**:
-  1. Design chunk metadata struct (chunk_id, size, crc32) and add serde support.
-  2. Implement sender/receiver state machines using buffered file handles pointing to `/run/serial_lcd_cache`.
-  3. Integrate resume logic keyed by chunk_id + checksum; store resumable manifests in RAM disk.
-  4. Extend CLI with `--push`/`--pull` commands (documented but disabled until stable) and cover with integration tests using fixtures in `tests/integration_mock.rs`.
-- **Crates & tooling**: `crc32fast` (already in tree) for chunk verification, `serialport` / `tokio-serial` for transport, consider `anyhow` for layered error propagation.
 
 ### Milestone D — Live Hardware Polling
 
@@ -159,41 +148,12 @@ The previously cited plan items are now satisfied: the executor handles Busy/Exi
 - **Dependencies**: P11, P15, P18.
 - **Constraints**: polling intervals must be configurable
 - **Workflow**:
-  1. Build polling module with systemstat crate.
+  1. Build polling module with `systemstat` to capture CPU/memory/disk/temperature snapshots without inflating the 5 MB RSS cap.
   2. Publish metrics into render queue via channels guarded by `std::sync::mpsc` or `crossbeam` (if later approved) to avoid blocking serial ingestion.
   3. Implement heartbeat packets (serde structs) and integrate into render loop timers; fallback to offline screen if missed.
-- **Crates & tooling**: `os_info` for system information, `log` for watchdog alerts, optional `tokio` timers if async polling chosen. systemstat or similar crate for metrics gathering.
+- **Crates & tooling**: `systemstat` for lightweight CPU/memory/disk snapshots, `os_info` for system information, `sysinfo` for live hardware info, `log` for watchdog alerts, optional `tokio` timers if async polling chosen.
 
-### Milestone E — LCD/Display Output Mode Expansion
 
-- **Goal**: push mission dashboards or multi-screen overlays to attached LCD/LED panels automatically.
-- **Scope**: extend `src/display/*` and `docs/lcd_patterns.md`; add payload options for multi-panel layouts.
-- **Dependencies**: P12, P20.
-- **Constraints**: keep HD44780 compatibility first; additional panels must use the same I²C backpack or compatible driver.
-- **Workflow**:
-  1. Model additional panel layouts in `src/display/overlays.rs`, using enums for placement and transitions.
-  2. Expand payload schema for multi-panel directives, ensuring backward compatibility.
-  3. Update `lcd_driver` to batch updates per panel, minimizing I²C writes.
-  4. Provide demo payloads + tests covering new display modes.
-- **Crates & tooling**: `hd44780-driver`, `linux-embedded-hal`, `rppal` for I²C, `log` for refresh diagnostics.
-
-#### Milestone E.1 — hd44780-driver migration (subtask of Milestone E)
-
-- **Goal**: Adopt the `hd44780-driver` crate for Linux builds in place of our in-tree implementation where appropriate, preserving the public `Lcd` and `lcd_driver::Hd44780` APIs and behavior.
-- **Scope**: `src/lcd_driver/mod.rs`, `src/lcd_driver/pcf8574.rs`, `src/display/lcd.rs`, `src/config/loader.rs`, `README.md`, `docs/lcd_patterns.md`, and tests.
-- **Dependencies**: P4, P12, `rppal`, `linux-embedded-hal`.
-- **Workflow**:
-  1. Add a small I2C adapter that presents a `rppal::i2c::I2c` (or `linux-embedded-hal::I2cdev`) as an `embedded-hal::blocking::i2c::Write` implementation for the `hd44780-driver` crate.
-  2. Add new `Hd44780::new_external(i2c_hal, addr, cols, rows)` and `Lcd::new_with_bus(...)` constructors. Keep old constructors as fallback.
-  3. Implement CGRAM/custom char helpers for the external driver by writing the CGRAM command and pattern bytes through the bus adapter (ensure alignment with the external crate's nibble/4-bit conventions).
-  4. Preserve the `I2cBus` trait for tests and the internal code path; share integration tests that validate parity in output and glyphs.
-  5. Add `--test-lcd` smoke tests and an optional `display.driver: "hd44780-driver" | "in-tree" | "auto"` config value that keeps the default experience unchanged but allows CI/experimental testing.
-  6. Incrementally default to `hd44780-driver` on Linux if all tests pass and hardware scans show consistency for 2 weeks.
-
-- **Acceptance**:
-  - Public `Lcd` facade and CLI remain unchanged.
-  - Feature parity validated (write_line, flicker-free writes, backlight toggle, blink, custom chars) by tests and hardware smoke runs.
-  - Memory and runtime constraints remain within the charter (<5 MB RSS) when the external driver is engaged.
 
 
 ### Milestone F — JSON-Protocol Mode + Payload Compression

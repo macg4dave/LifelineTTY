@@ -42,6 +42,8 @@ pub struct RunOptions {
     pub compression_enabled: Option<bool>,
     pub compression_codec: Option<CompressionCodec>,
     pub demo: bool,
+    pub polling_enabled: Option<bool>,
+    pub poll_interval_ms: Option<u64>,
 }
 
 /// Parsed command-line intent.
@@ -80,7 +82,7 @@ impl Command {
     }
     pub fn help() -> String {
         let mut help = String::from(
-            "lifelinetty - Serial-to-LCD daemon\n\nUSAGE:\n  lifelinetty run [--device <path>] [--baud <number>] [--cols <number>] [--rows <number>] [--payload-file <path>]\n  lifelinetty --help\n  lifelinetty --version\n\nOPTIONS:\n  --device <path>   Serial device path (default: /dev/ttyUSB0)\n  --baud <number>   Baud rate (default: 9600)\n  --flow-control <none|software|hardware>  Flow control override (default: none)\n  --parity <none|odd|even>       Parity override (default: none)\n  --stop-bits <1|2>              Stop bits override (default: 1)\n  --dtr-on-open <auto|on|off>    Control DTR state when opening the port (default: auto)\n  --serial-timeout-ms <number>   Read timeout in milliseconds (default: 500)\n  --cols <number>   LCD columns (default: 20)\n  --rows <number>   LCD rows (default: 4)\n  --payload-file <path>  Load a local JSON payload and render it once (testing helper)\n  --backoff-initial-ms <number>  Initial reconnect backoff (default: 500)\n  --backoff-max-ms <number>      Maximum reconnect backoff (default: 10000)\n  --pcf8574-addr <auto|0xNN>     PCF8574 I2C address or 'auto' to probe (default: auto)\n  --log-level <error|warn|info|debug|trace>  Log verbosity (default: info)\n  --log-file <path>              Append logs inside /run/serial_lcd_cache (also honors LIFELINETTY_LOG_PATH)\n  --compressed                   Enable schema compression (applies to schema_v1 payloads)\n  --no-compressed                Disable compression even if config enables it\n  --codec <lz4|zstd>             Codec to use when compression is enabled (default: lz4)\n  --demo                         Run built-in demo pages on the LCD (no serial input)\n",
+            "lifelinetty - Serial-to-LCD daemon\n\nUSAGE:\n  lifelinetty run [--device <path>] [--baud <number>] [--cols <number>] [--rows <number>] [--payload-file <path>]\n  lifelinetty --help\n  lifelinetty --version\n\nOPTIONS:\n  --device <path>   Serial device path (default: /dev/ttyUSB0)\n  --baud <number>   Baud rate (default: 9600)\n  --flow-control <none|software|hardware>  Flow control override (default: none)\n  --parity <none|odd|even>       Parity override (default: none)\n  --stop-bits <1|2>              Stop bits override (default: 1)\n  --dtr-on-open <auto|on|off>    Control DTR state when opening the port (default: auto)\n  --serial-timeout-ms <number>   Read timeout in milliseconds (default: 500)\n  --cols <number>   LCD columns (default: 20)\n  --rows <number>   LCD rows (default: 4)\n  --payload-file <path>  Load a local JSON payload and render it once (testing helper)\n  --backoff-initial-ms <number>  Initial reconnect backoff (default: 500)\n  --backoff-max-ms <number>      Maximum reconnect backoff (default: 10000)\n  --pcf8574-addr <auto|0xNN>     PCF8574 I2C address or 'auto' to probe (default: auto)\n  --log-level <error|warn|info|debug|trace>  Log verbosity (default: info)\n  --log-file <path>              Append logs inside /run/serial_lcd_cache (also honors LIFELINETTY_LOG_PATH)\n  --polling                      Enable hardware polling (default: config)\n  --no-polling                   Disable hardware polling even if config enables it\n  --poll-interval-ms <number>    Polling interval in milliseconds (default: 5000)\n  --compressed                   Enable schema compression (applies to schema_v1 payloads)\n  --no-compressed                Disable compression even if config enables it\n  --codec <lz4|zstd>             Codec to use when compression is enabled (default: lz4)\n  --demo                         Run built-in demo pages on the LCD (no serial input)\n",
         );
 
         #[cfg(feature = "serialsh-preview")]
@@ -176,6 +178,18 @@ fn parse_run_options(iter: &mut std::slice::Iter<String>) -> Result<RunOptions> 
             }
             "--log-file" => {
                 opts.log_file = Some(take_value(flag, iter)?);
+            }
+            "--polling" => {
+                opts.polling_enabled = Some(true);
+            }
+            "--no-polling" => {
+                opts.polling_enabled = Some(false);
+            }
+            "--poll-interval-ms" => {
+                let raw = take_value(flag, iter)?;
+                opts.poll_interval_ms = Some(raw.parse().map_err(|_| {
+                    Error::InvalidArgs("poll-interval-ms must be a positive integer".to_string())
+                })?);
             }
             "--compressed" => {
                 opts.compression_enabled = Some(true);
@@ -296,6 +310,8 @@ mod tests {
             log_file: Some("/tmp/lifelinetty.log".into()),
             compression_enabled: None,
             compression_codec: None,
+            polling_enabled: None,
+            poll_interval_ms: None,
             demo: true,
         };
         let cmd = Command::parse(&args).unwrap();
@@ -329,6 +345,8 @@ mod tests {
             log_file: None,
             compression_enabled: None,
             compression_codec: None,
+            polling_enabled: None,
+            poll_interval_ms: None,
             demo: false,
         };
         let cmd = Command::parse(&args).unwrap();
@@ -352,6 +370,29 @@ mod tests {
         let args = vec!["--no-compressed".into()];
         let expected = RunOptions {
             compression_enabled: Some(false),
+            ..Default::default()
+        };
+        let cmd = Command::parse(&args).unwrap();
+        assert_eq!(cmd, Command::Run(expected));
+    }
+
+    #[test]
+    fn parse_polling_flags() {
+        let args = vec!["--polling".into(), "--poll-interval-ms".into(), "3000".into()];
+        let expected = RunOptions {
+            polling_enabled: Some(true),
+            poll_interval_ms: Some(3000),
+            ..Default::default()
+        };
+        let cmd = Command::parse(&args).unwrap();
+        assert_eq!(cmd, Command::Run(expected));
+    }
+
+    #[test]
+    fn parse_polling_disable_flag() {
+        let args = vec!["--no-polling".into()];
+        let expected = RunOptions {
+            polling_enabled: Some(false),
             ..Default::default()
         };
         let cmd = Command::parse(&args).unwrap();

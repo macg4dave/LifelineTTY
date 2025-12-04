@@ -11,12 +11,13 @@ use std::{
 };
 
 use super::connection::attempt_serial_connect;
-use super::events::{CommandBridge, CommandExecutor, ScrollOffsets};
+use super::events::{CommandBridge, CommandEvent, CommandExecutor, ScrollOffsets};
 use super::input::Button;
 use super::lifecycle::{create_shutdown_flag, render_shutdown};
 use super::negotiation::NegotiationLog;
 use super::polling::{start_polling, PollEvent, PollSnapshot, PollingHandle};
 use super::tunnel::TunnelController;
+use super::watchdog::WatchdogMonitor;
 use super::{AppConfig, LogLevel, Logger};
 use crate::{
     config::Config,
@@ -44,6 +45,8 @@ use crc32fast::Hasher;
 
 const HEARTBEAT_GRACE_MS: u64 = 5_000;
 const HEARTBEAT_BLINK_MS: u64 = 1_000;
+const HEARTBEAT_MIN_TX_MS: u64 = 500;
+const HEARTBEAT_INTERVAL_DIVISOR: u64 = 3;
 const POLLING_OVERLAY_MIN_INTERVAL_MS: u64 = 1_500;
 const PROTOCOL_ERROR_LOG_MAX_BYTES: u64 = 256 * 1024;
 
@@ -175,6 +178,12 @@ struct LoopStats {
     reconnects: u64,
 }
 
+fn heartbeat_interval(timeout_ms: u64) -> Duration {
+    let divided = timeout_ms.saturating_div(HEARTBEAT_INTERVAL_DIVISOR);
+    let millis = divided.max(HEARTBEAT_MIN_TX_MS).min(timeout_ms);
+    Duration::from_millis(millis)
+}
+
 fn log_icon_fallbacks(logger: &Logger, palette: Option<IconPalette>) {
     let Some(palette) = palette else {
         return;
@@ -224,6 +233,7 @@ pub(super) fn run_render_loop(
     mut backoff: BackoffController,
     mut serial_connection: Option<SerialPort>,
     initial_disconnect_reason: Option<SerialFailureKind>,
+    mut supports_heartbeat: bool,
     negotiation_log: &mut NegotiationLog,
 ) -> Result<()> {
     let mut state = crate::state::RenderState::new(Some(PayloadDefaults {
@@ -251,6 +261,8 @@ pub(super) fn run_render_loop(
     let mut offline_displayed = false;
     let mut max_backoff_warned = false;
     let mut last_disconnect_reason = initial_disconnect_reason;
+    let mut serial_watchdog_active = false;
+    let mut tunnel_watchdog_active = false;
     let mut tunnel = TunnelController::new(config.command_allowlist.clone())?;
     let mut command_bridge = CommandBridge::new();
     let mut command_executor = CommandExecutor::new(config.command_allowlist.clone());
@@ -270,6 +282,20 @@ pub(super) fn run_render_loop(
         None
     };
 
+    let mut watchdog = WatchdogMonitor::new(
+        config.watchdog.serial_timeout_ms,
+        config.watchdog.tunnel_timeout_ms,
+    );
+    let mut serial_heartbeat_interval = heartbeat_interval(config.watchdog.serial_timeout_ms);
+    let mut tunnel_heartbeat_interval = heartbeat_interval(config.watchdog.tunnel_timeout_ms);
+    let mut next_serial_heartbeat = Instant::now() + serial_heartbeat_interval;
+    let mut next_tunnel_heartbeat = Instant::now() + tunnel_heartbeat_interval;
+
+    if serial_connection.is_some() {
+        watchdog.touch_serial();
+        watchdog.touch_tunnel();
+    }
+
     while running.load(Ordering::SeqCst) {
         if let Some(polling_state) = polling.as_mut() {
             while let Ok(event) = polling_state.handle.receiver().try_recv() {
@@ -281,6 +307,25 @@ pub(super) fn run_render_loop(
                         logger.warn(format!("polling error: {err}"));
                         polling_state.record_error(&err, logger);
                     }
+                }
+            }
+        }
+
+        // Proactively send heartbeat frames when supported.
+        if supports_heartbeat {
+            if let Some(serial_ref) = serial_connection.as_mut() {
+                let now = Instant::now();
+                if now >= next_serial_heartbeat {
+                    send_command_frame(
+                        serial_ref,
+                        CommandMessage::Heartbeat { request_id: None },
+                        logger,
+                    );
+                    next_serial_heartbeat = now + serial_heartbeat_interval;
+                }
+                if now >= next_tunnel_heartbeat {
+                    send_tunnel_frame(serial_ref, TunnelMsgOwned::Heartbeat, logger);
+                    next_tunnel_heartbeat = now + tunnel_heartbeat_interval;
                 }
             }
         }
@@ -366,7 +411,7 @@ pub(super) fn run_render_loop(
                 &config.negotiation,
                 negotiation_log,
             ) {
-                Ok(p) => {
+                Ok(outcome) => {
                     log_backoff(
                         logger,
                         BackoffPhase::Success,
@@ -376,8 +421,17 @@ pub(super) fn run_render_loop(
                         config,
                         None,
                     );
-                    serial_connection = Some(p);
+                    serial_connection = Some(outcome.port);
+                    supports_heartbeat = outcome
+                        .remote_caps
+                        .as_ref()
+                        .map(|caps| caps.supports_heartbeat)
+                        .unwrap_or(false);
                     backoff.mark_success(current_time);
+                    watchdog.touch_serial();
+                    watchdog.touch_tunnel();
+                    next_serial_heartbeat = Instant::now() + serial_heartbeat_interval;
+                    next_tunnel_heartbeat = Instant::now() + tunnel_heartbeat_interval;
                     lcd.clear()?;
                     reconnect_displayed = false;
                     offline_displayed = false;
@@ -412,6 +466,13 @@ pub(super) fn run_render_loop(
                             if looks_like_tunnel_frame(line) {
                                 match decode_tunnel_frame(line) {
                                     Ok(msg) => {
+                                        if matches!(msg, TunnelMsgOwned::Heartbeat) {
+                                            watchdog.touch_serial();
+                                            watchdog.touch_tunnel();
+                                            continue;
+                                        }
+                                        watchdog.touch_serial();
+                                        watchdog.touch_tunnel();
                                         if let Some(response) = tunnel.handle_msg(msg, logger) {
                                             send_tunnel_frame(
                                                 serial_connection_ref,
@@ -444,6 +505,13 @@ pub(super) fn run_render_loop(
                                         logger.debug(format!(
                                             "command frame buffered ({label}), awaiting executor"
                                         ));
+                                        if matches!(event, CommandEvent::Heartbeat { .. }) {
+                                            watchdog.touch_serial();
+                                            watchdog.touch_tunnel();
+                                            continue;
+                                        }
+                                        watchdog.touch_serial();
+                                        watchdog.touch_tunnel();
                                         if let Some(response) = command_executor.handle_event(event)
                                         {
                                             send_command_frame(
@@ -474,6 +542,7 @@ pub(super) fn run_render_loop(
                             match state.ingest(line) {
                                 Ok(Some(frame)) if frame.config_reload => {
                                     stats.frames_accepted += 1;
+                                    watchdog.touch_serial();
                                     logger.info("config reload requested");
                                     match Config::load_or_default() {
                                         Ok(new_cfg) => {
@@ -493,6 +562,22 @@ pub(super) fn run_render_loop(
                                             config.stop_bits = new_cfg.stop_bits;
                                             config.dtr_on_open = new_cfg.dtr_on_open;
                                             config.serial_timeout_ms = new_cfg.serial_timeout_ms;
+                                            config.watchdog = new_cfg.watchdog;
+
+                                            watchdog = WatchdogMonitor::new(
+                                                config.watchdog.serial_timeout_ms,
+                                                config.watchdog.tunnel_timeout_ms,
+                                            );
+                                            serial_heartbeat_interval = heartbeat_interval(
+                                                config.watchdog.serial_timeout_ms,
+                                            );
+                                            tunnel_heartbeat_interval = heartbeat_interval(
+                                                config.watchdog.tunnel_timeout_ms,
+                                            );
+                                            next_serial_heartbeat =
+                                                Instant::now() + serial_heartbeat_interval;
+                                            next_tunnel_heartbeat =
+                                                Instant::now() + tunnel_heartbeat_interval;
 
                                             let new_serial = config.serial_options();
 
@@ -548,6 +633,7 @@ pub(super) fn run_render_loop(
                                     lcd.set_blink(frame.blink)?;
                                     next_blink = current_time + blink_interval;
                                     last_frame_at = current_time;
+                                    watchdog.touch_serial();
                                     heartbeat_visible = false;
                                     if let Some(frame) = current_frame.as_ref() {
                                         next_page = current_time
@@ -566,6 +652,7 @@ pub(super) fn run_render_loop(
                                 }
                                 Ok(None) => {
                                     stats.duplicates += 1;
+                                    watchdog.touch_serial();
                                     logger.debug(format!("duplicate frame ignored crc={crc:08x}"));
                                 }
                                 Err(err) => {
@@ -604,6 +691,36 @@ pub(super) fn run_render_loop(
             }
         } else {
             thread::sleep(Duration::from_millis(50));
+        }
+
+        // Evaluate watchdog states after handling inbound/outbound traffic.
+        let wd_status = watchdog.evaluate(logger);
+        if wd_status.serial_recovered {
+            serial_watchdog_active = false;
+            logger.info("watchdog: serial channel recovered");
+        }
+        if wd_status.tunnel_recovered {
+            tunnel_watchdog_active = false;
+            logger.info("watchdog: tunnel channel recovered");
+        }
+        if wd_status.serial_expired && !serial_watchdog_active {
+            serial_watchdog_active = true;
+            logger.warn("watchdog: serial channel expired; forcing reconnect");
+            if serial_connection.is_some() {
+                serial_connection = None;
+                backoff.mark_failure(current_time);
+                reconnect_displayed = false;
+                offline_displayed = false;
+                last_disconnect_reason = None;
+            }
+            if !offline_displayed {
+                render_offline_message(lcd, config.cols)?;
+                offline_displayed = true;
+            }
+        }
+        if wd_status.tunnel_expired && !tunnel_watchdog_active {
+            tunnel_watchdog_active = true;
+            logger.warn("watchdog: tunnel channel expired");
         }
 
         // Rotate to the next queued frame after its page timeout.

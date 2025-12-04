@@ -69,6 +69,7 @@ pub struct AppConfig {
     pub protocol_schema_version: u8,
     pub compression_enabled: bool,
     pub compression_codec: CompressionCodec,
+    pub watchdog: crate::config::WatchdogConfig,
 }
 
 impl Default for AppConfig {
@@ -103,6 +104,7 @@ impl Default for AppConfig {
             protocol_schema_version: crate::config::DEFAULT_PROTOCOL_SCHEMA_VERSION,
             compression_enabled: crate::config::DEFAULT_PROTOCOL_COMPRESSION_ENABLED,
             compression_codec: crate::config::DEFAULT_PROTOCOL_COMPRESSION_CODEC,
+            watchdog: crate::config::WatchdogConfig::default(),
         }
     }
 }
@@ -171,16 +173,25 @@ impl App {
             NegotiationLog::disabled()
         });
 
-        let (serial_connection, initial_disconnect_reason) = match attempt_serial_connect(
-            &self.logger,
-            &config.device,
-            config.serial_options(),
-            &config.negotiation,
-            &mut negotiation_log,
-        ) {
-            Ok(port) => (Some(port), None),
-            Err(reason) => (None, Some(reason)),
-        };
+        let (serial_connection, initial_disconnect_reason, supports_heartbeat) =
+            match attempt_serial_connect(
+                &self.logger,
+                &config.device,
+                config.serial_options(),
+                &config.negotiation,
+                &mut negotiation_log,
+            ) {
+                Ok(outcome) => (
+                    Some(outcome.port),
+                    None,
+                    outcome
+                        .remote_caps
+                        .as_ref()
+                        .map(|caps| caps.supports_heartbeat)
+                        .unwrap_or(false),
+                ),
+                Err(reason) => (None, Some(reason), false),
+            };
         if serial_connection.is_none() {
             let now = Instant::now();
             backoff.mark_failure(now);
@@ -194,6 +205,7 @@ impl App {
             backoff,
             serial_connection,
             initial_disconnect_reason,
+            supports_heartbeat,
             &mut negotiation_log,
         )
     }
@@ -241,6 +253,7 @@ impl AppConfig {
             compression_codec: opts
                 .compression_codec
                 .unwrap_or(config.protocol.compression_codec),
+            watchdog: config.watchdog,
         }
     }
 

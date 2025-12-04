@@ -17,6 +17,13 @@ struct NegotiationResult {
     pending_frame: Option<String>,
 }
 
+pub(crate) struct ConnectOutcome {
+    pub port: SerialPort,
+    pub remote_caps: Option<Capabilities>,
+    pub fallback: bool,
+    pub pending_frame: Option<String>,
+}
+
 /// Attempt to open the serial port, send the INIT handshake, and log outcomes.
 pub(crate) fn attempt_serial_connect(
     logger: &Logger,
@@ -24,7 +31,7 @@ pub(crate) fn attempt_serial_connect(
     options: SerialOptions,
     negotiation: &NegotiationConfig,
     log: &mut NegotiationLog,
-) -> Result<SerialPort, SerialFailureKind> {
+) -> Result<ConnectOutcome, SerialFailureKind> {
     match SerialPort::connect(device, options) {
         Ok(mut serial_connection) => {
             if let Err(err) = serial_connection.send_command_line("INIT") {
@@ -54,7 +61,12 @@ pub(crate) fn attempt_serial_connect(
                     negotiation_result.role.as_str()
                 ));
             }
-            Ok(serial_connection)
+            Ok(ConnectOutcome {
+                port: serial_connection,
+                remote_caps: negotiation_result.remote_caps,
+                fallback: negotiation_result.fallback,
+                pending_frame: negotiation_result.pending_frame,
+            })
         }
         Err(err) => {
             let reason = classify_error(&err);

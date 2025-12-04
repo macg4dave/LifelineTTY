@@ -32,6 +32,7 @@ There is also a short frameworks document that describes the set of skeleton mod
 - Milestone B’s auto-negotiation is now live: `src/app/connection.rs` manages the INIT/hello/hello_ack exchange using `Negotiator`, records role decisions in `NegotiationLog`, and falls back to LCD-only mode when a peer does not understand the protocol. `src/app/negotiation.rs` captures the deterministic preference/role logic plus capability bits.
 - `src/config/loader.rs` now persists the `[negotiation]` block and a top-level `command_allowlist`, so `~/.serial_lcd/config.toml` round-trips cleanly and CLI-driven reconnects reuse the negotiated defaults.
 - Config and tunnel tests were refreshed to reflect the new handshake plumbing and still pass across the suite.
+- P14 compression is wired end-to-end: negotiation advertises support, runtime gating enforces the configured codec, and compressed envelopes are encoded/decoded with size/UTF-8 safeguards before hitting the render queue.
 
 ## Priority queue (P1–P20)
 
@@ -47,9 +48,8 @@ There is also a short frameworks document that describes the set of skeleton mod
 | **P9 (✅ 4 Dec 2025)** | **Server/client auto-negotiation**: implement handshake state in `src/app/connection.rs`, ensuring deterministic fallback to current behaviour when remote does not understand negotiation packets. _(Status: INIT handshakes emit hello/hello_ack frames with capability bits, handshake results are recorded via `NegotiationLog`, and legacy peers trigger LCD-only fallbacks.)_ |
 | **P11 (✅ 5 Dec 2025)** | **Live hardware polling agent**: `start_polling()` now spins in the daemon whenever `polling_enabled` is true, snapshots feed `run_render_loop` so CPU/mem/disk/temperature stats appear on the LCD during reconnects/boot, and `/run/serial_lcd_cache/polling/events.log` records every snapshot/error. CLI/config regression tests cover the `--polling`/`--poll-interval-ms` overrides. |
 | **P13 (✅ 3 Dec 2025)** | **JSON-protocol strict mode**: `RenderFrame::from_payload_json` now requires `schema_version`, applies strict length caps, and rejects oversized icon lists, so malformed frames fail fast. |
-| **P14** | **Payload compression support** _(in progress)_: LZ4/Zstd helpers live in `src/compression.rs`, yet payload ingestion still assumes plain JSON and `compression::CompressionCodec` is only referenced by the CLI parser. Implement the compressed envelope, negotiation bit, and parser/encoder wiring to actually ship compressed frames. |
+| **P14 (✅ 4 Dec 2025)** | **Payload compression support**: compression capability is negotiated, `CompressionCodec` is honored end-to-end, and compressed envelopes are now encoded/decoded with codec enforcement. Payload ingest respects the compression flag and rejects mismatched/disabled codecs. |
 | **P15 (✅ 5 Dec 2025)** | **Heartbeat + watchdog**: heartbeat frames now transmit on the command/tunnel lanes when supported by negotiation, `WatchdogMonitor` enforces serial/tunnel timeouts from config, and expiries trigger offline LCD fallbacks, cache-local hooks, and RAM-disk logs under `/run/serial_lcd_cache/watchdog/`. |
-| **P19** | **Documentation + sample payload refresh**: README, `docs/lcd_patterns.md`, and `samples/payload_examples*.json` still predate tunnel/polling guidance—update them with negotiated roles, command tunnel payloads, and any new icon rules once features solidify. |
 | **P20 (✅ 4 Dec 2025)** | **Serial transport resilience**: finalize explicit 8N1 + flow-control defaults in code, expose DTR/RTS toggles + timeout knobs via config for upcoming tunnels, and add structured error mapping/logs so reconnect logic can distinguish permission, unplug, and framing failures before Milestones A–C. _(Status: CLI + config cover flow-control/parity/stop-bits/DTR/timeouts, and telemetry now records categorized permission/unplug/framing causes for each reconnect.)_ |
 | **P21 (✅ 3 Dec 2025)** | **Adopt hd44780-driver crate for Linux builds where possible**: migrate the internal HD44780 driver to use the external `hd44780-driver` crate (via a small adapter for the platform I²C bus) while preserving our public API for any missing functionality. |
 | **P22 (✅ 4 Dec 2025)** | **Custom character support and built-in icons**: the IconBank now hot-swaps CGRAM glyphs per frame, `display::overlay_icons` can render every curated icon, and overflow cases gracefully fall back to ASCII with debug logs. Docs and samples cover the new behavior. |
@@ -57,18 +57,6 @@ There is also a short frameworks document that describes the set of skeleton mod
 
 To keep the serial link predictable, the daemon now enforces a 9600-baud floor and always starts there automatically. The new first-run wizard (Milestone I) runs automatically on fresh installs to help operators identify higher stable baud rates before upping the speed, and it records every session under `/run/serial_lcd_cache/wizard/` for auditing.
 
-### Priority implementation plan
-
-Only the still-open priorities are listed below; completed IDs remain documented in the table above.
-
-| Item | Current focus & next steps |
-| --- | --- |
-| **P14 — Payload compression support** | The parser still assumes plain JSON and no runtime path calls `compression::compress`/`decompress` (only the CLI parser mentions `CompressionCodec`). Define the compressed envelope, plumb negotiation bits, add fixture tests plus watchdog limits for oversized frames, and document the CLI/config knobs so operators know when compression is active. |
-| **P15 — Heartbeat + watchdog** | `src/app/watchdog.rs` is a stub and nothing instantiates it; the heartbeat indicator in `render_loop` is cosmetic. Implement mutual heartbeat frames across the LCD + tunnel lanes, add watchdog timers, trigger offline scripts/screens on expiry, and log watchdog transitions under `/run/serial_lcd_cache/watchdog/` with unit + integration coverage. |
-| **P19 — Documentation + sample payload refresh** | README and `docs/lcd_patterns.md` still lack negotiated-role, polling, and compression guidance, and `samples/payload_examples*.json` only covers the basic dashboard payloads. Add examples for tunnel commands, strict-schema payloads, icons, and upcoming polling frames, and cross-link storage guardrails (RAM disk vs `~/.serial_lcd`) wherever new docs mention cache paths. |
-| **P22 — Custom character support & icon banking** | `overlay_icons` only renders `battery`, `heart`, and `wifi`; other icons fall back to ASCII and there is no CGRAM bank manager. Build runtime glyph scheduling tied to `payload::icons`, persist icon sets per page, add tests covering slot eviction, and update `docs/icon_library.md` plus the README once the runtime is deterministic. |
-
-By keeping this plan visible in the roadmap, every contributor can see the remaining dependency graph: P14 unlocks Milestone F, P15 underpins watchdog safety for tunnels, P19 guards docs UX, and P22 enables Milestone H.
 
 ## Crate guidance for roadmap alignment
 

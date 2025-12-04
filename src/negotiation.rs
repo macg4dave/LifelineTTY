@@ -110,11 +110,11 @@ pub struct Capabilities {
 }
 
 impl Capabilities {
+    pub const COMPRESSION_V1: u32 = 0b0001_0000;
     pub const HANDSHAKE_V1: u32 = 0b0000_0001;
     pub const CMD_TUNNEL_V1: u32 = 0b0000_0010;
     pub const LCD_V2: u32 = 0b0000_0100;
     pub const HEARTBEAT_V1: u32 = 0b0000_1000;
-    pub const FILE_XFER_V1: u32 = 0b0001_0000;
 
     pub fn bits(&self) -> u32 {
         let mut bits = Self::HANDSHAKE_V1;
@@ -122,7 +122,7 @@ impl Capabilities {
             bits |= Self::CMD_TUNNEL_V1;
         }
         if self.supports_compression {
-            bits |= Self::FILE_XFER_V1;
+            bits |= Self::COMPRESSION_V1;
         }
         if self.supports_heartbeat {
             bits |= Self::HEARTBEAT_V1;
@@ -133,7 +133,7 @@ impl Capabilities {
     pub fn from_bits(bits: u32) -> Self {
         Self {
             supports_tunnel: bits & Self::CMD_TUNNEL_V1 != 0,
-            supports_compression: bits & Self::FILE_XFER_V1 != 0,
+            supports_compression: bits & Self::COMPRESSION_V1 != 0,
             supports_heartbeat: bits & Self::HEARTBEAT_V1 != 0,
         }
     }
@@ -170,4 +170,24 @@ pub enum ControlFrame {
 #[derive(Serialize, Deserialize)]
 pub struct ControlCaps {
     pub bits: u32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compression_bit_round_trips() {
+        let caps = Capabilities {
+            supports_tunnel: false,
+            supports_compression: true,
+            supports_heartbeat: false,
+        };
+        let bits = caps.bits();
+        assert!(bits & Capabilities::COMPRESSION_V1 != 0);
+        let decoded = Capabilities::from_bits(bits);
+        assert!(decoded.supports_compression);
+        assert!(!decoded.supports_tunnel);
+        assert!(!decoded.supports_heartbeat);
+    }
 }

@@ -7,7 +7,7 @@ use crate::{
         DEFAULT_ROWS, DEFAULT_SERIAL_TIMEOUT_MS,
     },
     lcd::Lcd,
-    payload::{Defaults as PayloadDefaults, RenderFrame},
+    payload::{CompressionPolicy, Defaults as PayloadDefaults, RenderFrame},
     serial::{DtrBehavior, FlowControlMode, ParityMode, SerialOptions, StopBitsMode},
     Result,
 };
@@ -161,7 +161,15 @@ impl App {
                 scroll_speed_ms: config.scroll_speed_ms,
                 page_timeout_ms: config.page_timeout_ms,
             };
-            let frame = load_payload_from_file(path, defaults)?;
+            let frame = load_payload_from_file(
+                path,
+                defaults,
+                if config.compression_enabled {
+                    CompressionPolicy::only(config.compression_codec)
+                } else {
+                    CompressionPolicy::disabled()
+                },
+            )?;
             lcd.set_backlight(frame.backlight_on)?;
             lcd.set_blink(frame.blink)?;
             return render_frame_once(&mut lcd, &frame);
@@ -179,6 +187,7 @@ impl App {
                 &config.device,
                 config.serial_options(),
                 &config.negotiation,
+                config.compression_enabled,
                 &mut negotiation_log,
             ) {
                 Ok(outcome) => (
@@ -269,9 +278,14 @@ impl AppConfig {
     }
 }
 
-fn load_payload_from_file(path: &str, defaults: PayloadDefaults) -> Result<RenderFrame> {
+fn load_payload_from_file(
+    path: &str,
+    defaults: PayloadDefaults,
+    compression_policy: CompressionPolicy,
+) -> Result<RenderFrame> {
     let raw = fs::read_to_string(path)?;
-    RenderFrame::from_payload_json_with_defaults(&raw, defaults)
+    let normalized = crate::payload::normalize_payload_json_with_policy(&raw, compression_policy)?;
+    RenderFrame::from_normalized_payload_with_defaults(&normalized, defaults)
 }
 
 #[cfg(test)]

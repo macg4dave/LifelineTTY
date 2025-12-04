@@ -31,7 +31,7 @@ use crate::{
     lcd::Lcd,
     payload::{
         decode_tunnel_frame, encode_command_frame, encode_tunnel_msg, CommandMessage,
-        Defaults as PayloadDefaults, RenderFrame, TunnelMsgOwned,
+        CompressionPolicy, Defaults as PayloadDefaults, RenderFrame, TunnelMsgOwned,
     },
     serial::{
         backoff::BackoffController,
@@ -225,6 +225,14 @@ fn log_backoff(
     }
 }
 
+fn compression_policy_from_config(config: &AppConfig) -> CompressionPolicy {
+    if config.compression_enabled {
+        CompressionPolicy::only(config.compression_codec)
+    } else {
+        CompressionPolicy::disabled()
+    }
+}
+
 /// Drive the main render loop: reads serial, rotates pages, scrolls text, handles reconnects.
 pub(super) fn run_render_loop(
     lcd: &mut Lcd,
@@ -236,10 +244,14 @@ pub(super) fn run_render_loop(
     mut supports_heartbeat: bool,
     negotiation_log: &mut NegotiationLog,
 ) -> Result<()> {
-    let mut state = crate::state::RenderState::new(Some(PayloadDefaults {
-        scroll_speed_ms: config.scroll_speed_ms,
-        page_timeout_ms: config.page_timeout_ms,
-    }));
+    let mut compression_policy = compression_policy_from_config(config);
+    let mut state = crate::state::RenderState::new_with_compression(
+        Some(PayloadDefaults {
+            scroll_speed_ms: config.scroll_speed_ms,
+            page_timeout_ms: config.page_timeout_ms,
+        }),
+        compression_policy,
+    );
     let mut icon_bank = IconBank::new();
     let mut incoming_line = String::new();
     let mut last_render = Instant::now();
@@ -409,6 +421,7 @@ pub(super) fn run_render_loop(
                 &config.device,
                 config.serial_options(),
                 &config.negotiation,
+                config.compression_enabled,
                 negotiation_log,
             ) {
                 Ok(outcome) => {
@@ -562,7 +575,15 @@ pub(super) fn run_render_loop(
                                             config.stop_bits = new_cfg.stop_bits;
                                             config.dtr_on_open = new_cfg.dtr_on_open;
                                             config.serial_timeout_ms = new_cfg.serial_timeout_ms;
+                                            config.compression_enabled =
+                                                new_cfg.protocol.compression_enabled;
+                                            config.compression_codec =
+                                                new_cfg.protocol.compression_codec;
                                             config.watchdog = new_cfg.watchdog;
+
+                                            compression_policy =
+                                                compression_policy_from_config(config);
+                                            state.set_compression_policy(compression_policy);
 
                                             watchdog = WatchdogMonitor::new(
                                                 config.watchdog.serial_timeout_ms,

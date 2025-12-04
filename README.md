@@ -216,7 +216,8 @@ journal-style summary of a tunnel-aware dashboard.
 
 ### Compression envelopes (Milestone F / P14)
 
-When `--compressed` (or `[protocol].compression.enabled = true`) is enabled, upstream senders can
+When `--compressed` (or `[protocol].compression.enabled = true`) is enabled, the daemon advertises
+compression support during negotiation and expects the configured codec. Upstream senders can then
 wrap each payload in a tiny envelope so the UART only ships compressed bytes:
 
 ```json
@@ -234,6 +235,10 @@ wrap each payload in a tiny envelope so the UART only ships compressed bytes:
 - `original_len` protects against truncated base64 blobs; mismatches are rejected.
 - `data` is base64-encoded LZ4/Zstd bytes; `serde_bytes` handles the encoding automatically if
   you serialize a `Vec<u8>`/`ByteBuf`.
+
+If compression is disabled or a different codec arrives than the configured `codec`, the payload is
+rejected (and logged) instead of being decompressed. This keeps legacy peers on plaintext while
+ensuring negotiated peers only ship envelopes you explicitly allowed.
 
 The render loop now normalizes envelopes before deduplication, so the same logical payload counts
 as a duplicate whether it was sent compressed or plain-text. Malformed envelopes never crash the
@@ -322,9 +327,9 @@ command_allowlist = []
 
 The `[protocol]` section locks the schema version (currently `1`) and lets you request
 compression by default. Set `compression.enabled = true` when both peers have negotiated the
-same codec via CLI/config (`lz4` today, `zstd` when enabled). The daemon still accepts plain
-JSON frames even when compression is disabled, but the flag ensures upstream senders only ship
-compressed envelopes when you opt in.
+same codec via CLI/config (`lz4` today, `zstd` when enabled). Compressed envelopes are rejected
+when disabled or when the codec does not match the configured one, while plaintext JSON remains
+accepted in all modes.
 
 Use `display_driver = "auto"` (default) to stick with the in-tree PCF8574 driver until the
 hd44780-driver rollout finishes. Set it to `"hd44780-driver"` to force the external crate on
@@ -383,9 +388,9 @@ Reload config without restarting the daemon:
 | `--polling` | Force-enable the hardware polling overlay even if the config disables it. | Defaults to the config value (`polling_enabled`). |
 | `--no-polling` | Disable polling even when the config enables it. | Handy for smoke tests if you want to suppress the overlay/logging. |
 | `--poll-interval-ms <number>` | Interval between poll snapshots. | `5000` ms (must stay within 1000–60000 ms). |
-| `--compressed` | Request compressed payloads when the peer also advertises the capability. | Defaults to `[protocol].compression.enabled` (false). |
-| `--no-compressed` | Force plaintext payloads even if config/negotiation enabled compression. | Use when diagnosing envelope issues or talking to legacy peers. |
-| `--codec <lz4\|zstd>` | Choose the codec when compression is active. | `lz4` |
+| `--compressed` | Advertise compression support and accept envelopes using the configured codec. | Defaults to `[protocol].compression.enabled` (false). |
+| `--no-compressed` | Reject compressed envelopes even if config/negotiation enabled compression. | Use when diagnosing envelope issues or talking to legacy peers. |
+| `--codec <lz4\|zstd>` | Choose the codec enforced when compression is active. | `lz4` |
 | `--demo` | Run built-in demo pages to validate wiring—no serial input required. | Disabled by default. |
 | `--serialsh` | Launch the optional serial shell that sends commands through the tunnel and streams remote stdout/stderr plus exit codes. | Disabled by default so daemons keep running headless unless you explicitly opt into the interactive session. |
 | `--wizard` | Run the guided first-run wizard even if a config already exists. | Automatically runs when `~/.serial_lcd/config.toml` is missing; also forceable via `LIFELINETTY_FORCE_WIZARD=1`. |

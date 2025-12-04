@@ -30,6 +30,7 @@ pub(crate) fn attempt_serial_connect(
     device: &str,
     options: SerialOptions,
     negotiation: &NegotiationConfig,
+    compression_enabled: bool,
     log: &mut NegotiationLog,
 ) -> Result<ConnectOutcome, SerialFailureKind> {
     match SerialPort::connect(device, options) {
@@ -41,8 +42,13 @@ pub(crate) fn attempt_serial_connect(
             }
             logger.info("serial connected");
             log.record("negotiation: serial connected");
-            let negotiation_result =
-                negotiate_handshake(&mut serial_connection, logger, negotiation, log);
+            let negotiation_result = negotiate_handshake(
+                &mut serial_connection,
+                logger,
+                negotiation,
+                compression_enabled,
+                log,
+            );
             if negotiation_result.fallback {
                 logger.info("negotiation: falling back to legacy LCD-only mode");
                 log.record("negotiation: falling back to legacy mode");
@@ -82,12 +88,13 @@ fn negotiate_handshake<IO>(
     io: &mut IO,
     logger: &Logger,
     config: &NegotiationConfig,
+    compression_enabled: bool,
     log: &mut NegotiationLog,
 ) -> NegotiationResult
 where
     IO: LineIo,
 {
-    let negotiator = Negotiator::new(config);
+    let negotiator = Negotiator::new(config, compression_enabled);
     let hello_frame = negotiator.hello_frame();
     log.record("negotiation: sending hello");
     if !send_control_frame(io, &hello_frame, "hello", logger, log) {
@@ -294,7 +301,13 @@ mod tests {
         let mut io = FakeLineIo::with_responses(vec![ack]);
         let logger = new_logger();
         let mut log = NegotiationLog::disabled();
-        let result = negotiate_handshake(&mut io, &logger, &NegotiationConfig::default(), &mut log);
+        let result = negotiate_handshake(
+            &mut io,
+            &logger,
+            &NegotiationConfig::default(),
+            false,
+            &mut log,
+        );
         assert!(!result.fallback);
         assert_eq!(result.role, Role::Client);
         assert_eq!(result.remote_role, Some(Role::Server));
@@ -311,7 +324,13 @@ mod tests {
         let mut io = FakeLineIo::with_responses(vec![hello, ack]);
         let logger = new_logger();
         let mut log = NegotiationLog::disabled();
-        let result = negotiate_handshake(&mut io, &logger, &NegotiationConfig::default(), &mut log);
+        let result = negotiate_handshake(
+            &mut io,
+            &logger,
+            &NegotiationConfig::default(),
+            false,
+            &mut log,
+        );
         assert!(!result.fallback);
         assert!(io
             .sent()
@@ -325,7 +344,13 @@ mod tests {
         let mut io = FakeLineIo::with_responses(vec![unknown]);
         let logger = new_logger();
         let mut log = NegotiationLog::disabled();
-        let result = negotiate_handshake(&mut io, &logger, &NegotiationConfig::default(), &mut log);
+        let result = negotiate_handshake(
+            &mut io,
+            &logger,
+            &NegotiationConfig::default(),
+            false,
+            &mut log,
+        );
         assert!(result.fallback);
         assert_eq!(result.pending_frame.as_deref(), Some(unknown));
     }

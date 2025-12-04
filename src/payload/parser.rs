@@ -1,5 +1,5 @@
 use crate::{
-    compression::{decompress, CompressionCodec},
+    compression::{compress, decompress, CompressionCodec},
     config::DEFAULT_PROTOCOL_SCHEMA_VERSION,
     Error, Result, CACHE_DIR,
 };
@@ -196,11 +196,64 @@ struct CompressionEnvelopeOwned {
     data: ByteBuf,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompressionPolicy {
+    pub enabled: bool,
+    pub allowed_codec: Option<CompressionCodec>,
+}
+
+impl CompressionPolicy {
+    pub fn allow_any() -> Self {
+        Self {
+            enabled: true,
+            allowed_codec: None,
+        }
+    }
+
+    pub fn disabled() -> Self {
+        Self {
+            enabled: false,
+            allowed_codec: None,
+        }
+    }
+
+    pub fn only(codec: CompressionCodec) -> Self {
+        Self {
+            enabled: true,
+            allowed_codec: Some(codec),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct CompressionEnvelopeWriter<'a> {
+    #[serde(rename = "type")]
+    frame_type: &'a str,
+    schema_version: u8,
+    codec: &'a str,
+    original_len: u32,
+    #[serde(with = "serde_bytes")]
+    data: ByteBuf,
+}
+
 pub fn normalize_payload_json<'a>(raw: &'a str) -> Result<Cow<'a, str>> {
+    normalize_payload_json_with_policy(raw, CompressionPolicy::allow_any())
+}
+
+pub fn normalize_payload_json_with_policy<'a>(
+    raw: &'a str,
+    policy: CompressionPolicy,
+) -> Result<Cow<'a, str>> {
     let probe: FrameTypeProbe =
         serde_json::from_str(raw).map_err(|e| Error::Parse(format!("json: {e}")))?;
     if probe.kind.as_deref() != Some("compressed") {
         return Ok(Cow::Borrowed(raw));
+    }
+
+    if !policy.enabled {
+        return Err(Error::Parse(
+            "compressed payload rejected: compression disabled".into(),
+        ));
     }
 
     let envelope: CompressionEnvelopeOwned =
@@ -224,6 +277,15 @@ pub fn normalize_payload_json<'a>(raw: &'a str) -> Result<Cow<'a, str>> {
             envelope.codec
         ))
     })?;
+    if let Some(expected) = policy.allowed_codec {
+        if codec != expected {
+            return Err(Error::Parse(format!(
+                "compression codec '{}' not allowed (expected {})",
+                envelope.codec,
+                expected.as_str()
+            )));
+        }
+    }
     let decompressed = decompress(envelope.data.as_ref(), codec)?;
     if decompressed.len() != envelope.original_len as usize {
         return Err(Error::Parse(format!(
@@ -235,6 +297,18 @@ pub fn normalize_payload_json<'a>(raw: &'a str) -> Result<Cow<'a, str>> {
     let payload = String::from_utf8(decompressed)
         .map_err(|_| Error::Parse("decompressed payload not utf-8".into()))?;
     Ok(Cow::Owned(payload))
+}
+
+pub fn encode_compressed_payload(payload: &str, codec: CompressionCodec) -> Result<String> {
+    let data = compress(payload.as_bytes(), codec)?;
+    let envelope = CompressionEnvelopeWriter {
+        frame_type: "compressed",
+        schema_version: DEFAULT_PROTOCOL_SCHEMA_VERSION,
+        codec: codec.as_str(),
+        original_len: payload.len() as u32,
+        data: ByteBuf::from(data),
+    };
+    serde_json::to_string(&envelope).map_err(|e| Error::Parse(format!("json: {e}")))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -899,5 +973,35 @@ mod tests {
         let raw = serde_json::to_string(&value).unwrap();
         let err = RenderFrame::from_payload_json(&raw).unwrap_err();
         assert!(format!("{err}").contains("unsupported compression codec"));
+    }
+
+    #[test]
+    fn compressed_payload_respects_disabled_policy() {
+        let raw = r#"{"schema_version":1,"line1":"POLICY","line2":"TEST"}"#;
+        let envelope = encode_compressed_payload(raw, CompressionCodec::Lz4).unwrap();
+        let policy = CompressionPolicy::disabled();
+        let err = normalize_payload_json_with_policy(&envelope, policy).unwrap_err();
+        assert!(format!("{err}").contains("compression disabled"));
+    }
+
+    #[test]
+    fn compressed_payload_rejects_mismatched_codec() {
+        let raw = r#"{"schema_version":1,"line1":"CODEC","line2":"MISMATCH"}"#;
+        let envelope = encode_compressed_payload(raw, CompressionCodec::Zstd).unwrap();
+        let policy = CompressionPolicy::only(CompressionCodec::Lz4);
+        let err = normalize_payload_json_with_policy(&envelope, policy).unwrap_err();
+        assert!(format!("{err}").contains("not allowed"));
+    }
+
+    #[test]
+    fn encode_compressed_payload_round_trips_with_policy() {
+        let raw = r#"{"schema_version":1,"line1":"ROUND","line2":"TRIP"}"#;
+        let envelope = encode_compressed_payload(raw, CompressionCodec::Lz4).unwrap();
+        let normalized = normalize_payload_json_with_policy(
+            &envelope,
+            CompressionPolicy::only(CompressionCodec::Lz4),
+        )
+        .unwrap();
+        assert_eq!(normalized.as_ref(), raw);
     }
 }

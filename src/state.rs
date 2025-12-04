@@ -7,7 +7,8 @@ use crc32fast::Hasher;
 
 use crate::{
     payload::{
-        normalize_payload_json, Defaults, RenderFrame, DEFAULT_PAGE_TIMEOUT_MS, DEFAULT_SCROLL_MS,
+        normalize_payload_json_with_policy, CompressionPolicy, Defaults, RenderFrame,
+        DEFAULT_PAGE_TIMEOUT_MS, DEFAULT_SCROLL_MS,
     },
     Error, Result,
 };
@@ -25,10 +26,18 @@ pub struct RenderState {
     pages: VecDeque<FrameEntry>,
     last_crc: Option<u32>,
     defaults: Defaults,
+    compression_policy: CompressionPolicy,
 }
 
 impl RenderState {
     pub fn new(defaults: Option<Defaults>) -> Self {
+        Self::new_with_compression(defaults, CompressionPolicy::allow_any())
+    }
+
+    pub fn new_with_compression(
+        defaults: Option<Defaults>,
+        compression_policy: CompressionPolicy,
+    ) -> Self {
         Self {
             pages: VecDeque::new(),
             last_crc: None,
@@ -36,13 +45,14 @@ impl RenderState {
                 scroll_speed_ms: DEFAULT_SCROLL_MS,
                 page_timeout_ms: DEFAULT_PAGE_TIMEOUT_MS,
             }),
+            compression_policy,
         }
     }
 
     /// Ingest a JSON frame string. Returns Some(frame) if it is new, None if duplicate.
     pub fn ingest(&mut self, raw: &str) -> Result<Option<RenderFrame>> {
         self.prune_expired(Instant::now());
-        let normalized = normalize_payload_json(raw)?;
+        let normalized = normalize_payload_json_with_policy(raw, self.compression_policy)?;
         let canonical = normalized.as_ref();
         if canonical.len() > MAX_FRAME_BYTES {
             return Err(Error::Parse(format!(
@@ -93,6 +103,10 @@ impl RenderState {
 
     pub fn set_defaults(&mut self, defaults: Defaults) {
         self.defaults = defaults;
+    }
+
+    pub fn set_compression_policy(&mut self, policy: CompressionPolicy) {
+        self.compression_policy = policy;
     }
 
     fn prune_expired(&mut self, now: Instant) {
@@ -205,5 +219,23 @@ mod tests {
         assert!(state.ingest(raw).unwrap().is_some());
         // Same frame arrives again but wrapped in compression envelope; dedupe should trigger.
         assert!(state.ingest(&wrapped).unwrap().is_none());
+    }
+
+    #[test]
+    fn compression_policy_disabled_rejects_envelope() {
+        let raw = r#"{"schema_version":1,"line1":"COMP","line2":"DISABLED"}"#;
+        let compressed = compress(raw.as_bytes(), CompressionCodec::Lz4).unwrap();
+        let envelope = TestEnvelope {
+            kind: "compressed",
+            schema_version: 1,
+            codec: "lz4",
+            original_len: raw.len() as u32,
+            data: ByteBuf::from(compressed),
+        };
+        let wrapped = serde_json::to_string(&envelope).unwrap();
+
+        let mut state = RenderState::new_with_compression(None, CompressionPolicy::disabled());
+        let err = state.ingest(&wrapped).unwrap_err();
+        assert!(format!("{err}").contains("compression disabled"));
     }
 }

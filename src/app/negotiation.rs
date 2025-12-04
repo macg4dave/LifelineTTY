@@ -21,11 +21,11 @@ pub struct Negotiator {
 }
 
 impl Negotiator {
-    pub fn new(config: &NegotiationConfig) -> Self {
+    pub fn new(config: &NegotiationConfig, compression_enabled: bool) -> Self {
         Self {
             local_caps: Capabilities {
                 supports_tunnel: true,
-                supports_compression: false,
+                supports_compression: compression_enabled,
                 supports_heartbeat: true,
             },
             preference: config.preference,

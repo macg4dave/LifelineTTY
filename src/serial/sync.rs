@@ -110,6 +110,16 @@ impl SerialPort {
     }
 }
 
+impl super::LineIo for SerialPort {
+    fn send_command_line(&mut self, line: &str) -> crate::Result<()> {
+        SerialPort::send_command_line(self, line)
+    }
+
+    fn read_message_line(&mut self, buf: &mut String) -> crate::Result<usize> {
+        SerialPort::read_message_line(self, buf)
+    }
+}
+
 pub struct SerialReader<'a> {
     port: &'a mut dyn serialport::SerialPort,
 }

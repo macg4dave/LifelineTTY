@@ -201,3 +201,9 @@ impl Default for SerialOptions {
 }
 
 pub use sync::SerialPort;
+
+/// Trait used by `app::connection` to negotiate handshake frames.
+pub trait LineIo {
+    fn send_command_line(&mut self, line: &str) -> crate::Result<()>;
+    fn read_message_line(&mut self, buf: &mut String) -> crate::Result<usize>;
+}

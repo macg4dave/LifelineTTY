@@ -259,6 +259,13 @@ fn split_command_line(line: &str) -> std::result::Result<Vec<String>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use crate::app::logger::LogLevel;
+    #[cfg(unix)]
+    use std::{
+        thread,
+        time::{Duration, Instant},
+    };
 
     #[test]
     fn split_command_line_handles_quotes() {
@@ -285,5 +292,52 @@ mod tests {
         assert!(!controller.is_allowed("/bin/echo"));
         assert!(controller.is_allowed("ls"));
         assert!(controller.is_allowed("/bin/ls"));
+    }
+
+    #[cfg(unix)]
+    fn wait_for_exit(controller: &mut TunnelController, timeout: Duration) -> TunnelMsgOwned {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if let Some(msg) = controller.next_outgoing() {
+                if matches!(msg, TunnelMsgOwned::Exit { .. }) {
+                    return msg;
+                }
+            } else if Instant::now() >= deadline {
+                panic!("timed out waiting for exit message");
+            } else {
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn busy_response_blocks_concurrent_commands() {
+        let mut controller = TunnelController::new(Vec::new()).unwrap();
+        let logger = Logger::new(LogLevel::Info, None).unwrap();
+
+        assert!(controller
+            .handle_msg(
+                TunnelMsgOwned::CmdRequest {
+                    cmd: "sleep 1".into(),
+                },
+                &logger,
+            )
+            .is_none());
+
+        let busy = controller
+            .handle_msg(TunnelMsgOwned::CmdRequest { cmd: "true".into() }, &logger)
+            .expect("expected Busy response");
+        assert!(matches!(busy, TunnelMsgOwned::Busy));
+
+        let exit = wait_for_exit(&mut controller, Duration::from_secs(5));
+        assert!(matches!(exit, TunnelMsgOwned::Exit { code: 0 }));
+
+        assert!(controller
+            .handle_msg(TunnelMsgOwned::CmdRequest { cmd: "true".into() }, &logger,)
+            .is_none());
+
+        let final_exit = wait_for_exit(&mut controller, Duration::from_secs(5));
+        assert!(matches!(final_exit, TunnelMsgOwned::Exit { code: 0 }));
     }
 }

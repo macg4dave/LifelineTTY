@@ -82,6 +82,7 @@ pub enum TunnelMsg<'a> {
 3. **Integration tests (`tests/bin_smoke.rs`, `tests/integration_mock.rs`)** — rely on the fake serial helpers already in-tree to emulate UART, covering stdout-only, stderr-only, mixed output, checksum mismatch, partial frame reconstruction, and large file streaming.
 4. **CLI smoke (`tests/bin_smoke.rs`)** — `lifelinetty --serialsh --device fake0 --demo` returns expected exit codes and respects config overrides.
 5. **Resource budget checks** — ensure RSS stays under 5 MB on Raspberry Pi 1 by bounding chunk buffers and using streaming IO.
+6. **Latency regression (`tests/latency_sim.rs`)** — script `FakeSerialPort` responses with delays to mimic a slow UART and prove the render loop still accepts LCD payloads while tunnel frames are streaming through.
 
 ## Observability & guardrails
 

@@ -2,7 +2,7 @@
 Purpose: keep every AI-assisted change aligned with the Dec 2025 roadmap in `docs/roadmap.md`. All guidance here is binding—stay within scope, finish the blockers first, and move through priorities only when explicitly scheduled.
 
 ## One-line mission
-Ship a single, ultra-light Rust daemon for Raspberry Pi 1 (ARMv6) that reads newline-delimited JSON (and key=value fallbacks) from `/dev/ttyUSB0` at 9600 baud, renders two HD44780 LCD lines via a PCF8574 I²C backpack, and runs for months without exceeding 5 MB RSS.
+Ship a single, ultra-light Rust daemon, that reads newline-delimited JSON (and key=value fallbacks) from `/dev/ttyUSB0` at 9600 baud, renders two HD44780 LCD lines via a PCF8574 I²C backpack, and runs for months without exceeding 5 MB RSS.
 
 ## Roadmap alignment (read before coding)
 1. **Blockers (B1–B6)** — rename fallout, charter sync, cache-policy audit, CLI docs/tests, prompt refresh, and release tooling. Nothing else lands until these are closed.
@@ -64,11 +64,11 @@ Details:
 6. Resist feature creep—no speculative refactors or new capabilities beyond the roadmap milestones.
 
 ## Development + review environment
-- Target hardware: Raspberry Pi 1 Model A (ARMv6, Debian/systemd). Cross-compile or use QEMU/docker images in `docker/` and `scripts/local-release.sh` for packaging.
-- Services: `lifelinetty.service` must remain systemd-friendly (no extra daemons). Legacy `seriallcd.service` units have been retired, so ensure release artifacts (`packaging/`, Dockerfiles) stay consistent with the rename plan (B6).
+- Target client hardware: Raspberry Pi 1 Model A (ARMv6, Debian/systemd). Target server hardware: crossplatform Linux (Debian/systemd). Cross-compile or use QEMU/docker images in `docker/` and `scripts/local-release.sh` for packaging.
+- Services: `lifelinetty.service` must remain systemd-friendly (no extra daemons).
 
 ## Documentation expectations
-- Keep README, `docs/architecture.md`, `docs/roadmap.md`, `docs/lcd_patterns.md`, and `samples/` payloads synchronized with functionality.
+- Keep README, `docs/architecture.md`, `docs/Roadmaps/[VERSION]/roadmap.md`, `docs/lcd_patterns.md`, and `samples/` payloads synchronized with functionality.
 - When adding protocol/CLI changes, update `spec.txt` (or create it if missing) and annotate roadmap items with the new state.
 - Comment non-obvious state machines (render loop, serial backoff, payload parser) so future contributors can reason about them.
 - All doc updates must ship with their accompanying code changes.

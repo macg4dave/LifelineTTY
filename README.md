@@ -404,6 +404,33 @@ Reload config without restarting the daemon:
 - **LCD detection**: the wizard now asks up front whether an LCD is connected before touching the hardware; answering `n` saves a 2-row fallback configuration so the daemon keeps running without an attached display.
 - **LCD cues + logging**: prompts mirror onto the LCD (when available), and every outcome is appended to `/run/serial_lcd_cache/wizard/summary.log` for auditing alongside serial/log caches.
 
+#### Wizard helper snippets (Milestone 2 planning)
+
+The upcoming wizard refresh (see v0.2.0 roadmap Milestone 2) will surface opt-in text-only helpers during the interview. Nothing runs automatically—the wizard only shows you snippets you can paste yourself. Examples:
+
+- **Copy the binary to a Pi (client ➜ server):**
+
+  ```sh
+  scp lifelinetty pi@raspberrypi.local:/usr/local/bin/lifelinetty
+  scp ~/.serial_lcd/config.toml pi@raspberrypi.local:~/.serial_lcd/config.toml
+  ```
+
+- **Pull wizard/cache logs back to your laptop:**
+
+  ```sh
+  scp -r pi@raspberrypi.local:/run/serial_lcd_cache/wizard pi-logs/
+  scp pi@raspberrypi.local:/run/serial_lcd_cache/serial_backoff.log pi-logs/
+  ```
+
+- **Tail logs over SSH inside tmux (leaves a session you can reattach):**
+
+  ```sh
+  ssh -t pi@raspberrypi.local \
+    'tmux new -A -s lifelinetty "cd /run/serial_lcd_cache && tail -F wizard/summary.log serial_backoff.log"'
+  ```
+
+All paths stay within `/run/serial_lcd_cache` or `~/.serial_lcd/config.toml`, matching the storage charter.
+
 ### Serial shell mode (Milestone G)
 
 Milestone G supplies an official interactive shell for the command tunnel. Run `lifelinetty --serialsh` to drop into the `serialsh>` prompt, send JSON `CmdRequest` frames, and stream the remote stdout/stderr chunks plus their exit code. Busy responses and command failures stay visible so you always know when the remote host is congested. The CLI rejects `--demo` and `--payload-file` when `--serialsh` is enabled so that the tunnel stays dedicated to interactive commands, and the default systemd service still runs the headless `lifelinetty run` path unless you explicitly launch the shell yourself.

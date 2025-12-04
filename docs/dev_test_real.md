@@ -1,8 +1,7 @@
 # Dev + Test loop for LifelineTTY
 
 Got you. You want a **repeatable dev-loop**: build on your PC → auto-ship a binary to the Pi → launch both Pi and local binaries inside tmux → observe logs → restart cleanly without leaving zombies.
-_Roadmap alignment: **P19 — Documentation + sample payload refresh** (real hardware test workflow guide)._
-_Roadmap alignment: **P19 — Documentation + sample payload refresh** (real hardware test workflow guide)._ 
+_Roadmap alignment: **v0.2.0 field trial readiness + devtest milestone** (real hardware test workflow guide)._ 
 
 ---
 
@@ -31,11 +30,15 @@ Run everything from the repo root so relative paths resolve correctly.
 
 - Running the same commit/build you plan to test.
 - `lifelinetty.service` temporarily stopped while you run manual sessions:
+
   ```bash
   sudo systemctl stop lifelinetty.service
   ```
+
 - `/run/serial_lcd_cache` exists and is writable by the service user (systemd unit and the dev loop both rely on it).
 - Pi clock + locale set so file timestamps remain sane when logs get pulled back.
+
+**Matrix reminder (v0.2.0):** exercise at least the baseline (USB0 9600 16×2), alt TTY (AMA0 9600), and higher-baud probe (USB0 19200) scenarios while running this loop. Note outcomes and cache logs for each.
 
 ---
 
@@ -73,7 +76,7 @@ Tips:
 
 ## 3. Build → copy → dual-run (`devtest/run-dev.sh`)
 
-```
+```bash
 ./devtest/run-dev.sh
 ```
 
@@ -108,7 +111,7 @@ scp -r "$PI_HOST:/run/serial_lcd_cache" ./tmp/pi-cache-$(date +%s)
 
 ### Local-only watch (`devtest/watch.sh`)
 
-```
+```bash
 ./devtest/watch.sh
 ```
 
@@ -116,7 +119,7 @@ scp -r "$PI_HOST:/run/serial_lcd_cache" ./tmp/pi-cache-$(date +%s)
 
 ### Pi-integrated watch (`devtest/watch-remote.sh`)
 
-```
+```bash
 ./devtest/watch-remote.sh
 ```
 
@@ -164,7 +167,6 @@ VS Code will surface stdout/stderr inline while `tmux` handles the interactive p
 1. Detach from tmux (`Ctrl+b d`) or exit to kill both binaries.
 2. Restart `lifelinetty.service` so the Pi goes back to production behavior.
 3. Archive logs from `/run/serial_lcd_cache` if you need to compare runs.
-4. Commit any config/doc/script tweaks under `devtest/` so the team shares the same workflow (P19 requirement).
+4. Commit any config/doc/script tweaks under `devtest/` so the team shares the same workflow (v0.2.0 devtest milestone requirement).
 
 That’s it—real hardware testing now takes one command, stays within charter guardrails, and provides a clean way to compare local vs. Pi behavior side-by-side.
-

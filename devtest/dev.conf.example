@@ -14,7 +14,7 @@ PI_BIN=/home/pi/lifelinetty/lifelinetty
 LOCAL_BIN=target/debug/lifelinetty
 
 # Arguments passed to BOTH the remote and local binaries.
-# Include LCD geometry, device, etc., as needed.
+# Stick to charter defaults (USB0 @ 9600 8N1) unless you intentionally probe another port/baud.
 COMMON_ARGS="--run --device /dev/ttyUSB0 --baud 9600 --cols 16 --rows 2"
 
 # You can optionally add args that only apply to the remote or local
@@ -30,8 +30,10 @@ BUILD_CMD="cargo build"
 TMUX_SESSION=lifeline-dev
 
 # Enable a third pane that tails /run/serial_lcd_cache on the Pi.
+# Keep watchers inside CACHE_DIR to respect the storage policy.
 ENABLE_LOG_PANE=true
 LOG_WATCH_CMD="watch -n 0.5 ls -lh /run/serial_lcd_cache"
 
 # Pattern used to kill any stale remote processes before launching.
+# Stop lifelinetty.service on the Pi before running this loop to avoid device contention.
 PKILL_PATTERN=lifelinetty

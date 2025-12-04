@@ -182,23 +182,35 @@ mod serialsh_smoke {
     use lifelinetty::Result;
     use std::io::Cursor;
 
+    struct FakeTransport(FakeSerialPort);
+
+    impl FakeTransport {
+        fn new(script: Vec<Result<String>>) -> Self {
+            Self(FakeSerialPort::new(script))
+        }
+
+        fn writes(&self) -> &[String] {
+            self.0.writes()
+        }
+    }
+
+    impl SerialShellTransport for FakeTransport {
+        fn send_command_line(&mut self, line: &str) -> Result<()> {
+            self.0.send_command_line(line)
+        }
+
+        fn read_message_line(&mut self, buf: &mut String) -> Result<usize> {
+            self.0.read_message_line(buf)
+        }
+    }
+
     fn encoded(msg: TunnelMsgOwned) -> String {
         encode_tunnel_msg(&msg).expect("failed to encode tunnel frame")
     }
 
-    impl SerialShellTransport for FakeSerialPort {
-        fn send_command_line(&mut self, line: &str) -> Result<()> {
-            FakeSerialPort::send_command_line(self, line)
-        }
-
-        fn read_message_line(&mut self, buf: &mut String) -> Result<usize> {
-            FakeSerialPort::read_message_line(self, buf)
-        }
-    }
-
     #[test]
     fn serial_shell_round_trip_delivers_output() {
-        let mut serial = FakeSerialPort::new(vec![
+        let mut serial = FakeTransport::new(vec![
             Ok(encoded(TunnelMsgOwned::Stdout {
                 chunk: b"hello".to_vec(),
             })),
@@ -233,7 +245,7 @@ mod serialsh_smoke {
 
     #[test]
     fn serial_shell_busy_response_returns_one() {
-        let mut serial = FakeSerialPort::new(vec![Ok(encoded(TunnelMsgOwned::Busy))]);
+        let mut serial = FakeTransport::new(vec![Ok(encoded(TunnelMsgOwned::Busy))]);
         let mut input = Cursor::new("list\nexit\n");
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();

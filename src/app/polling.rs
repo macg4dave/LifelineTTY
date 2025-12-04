@@ -7,8 +7,8 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant};
 
-use sysinfo::{DiskExt, System as InfoSystem, SystemExt};
-use systemstat::{data::CpuLoad, data::Temperature, Platform, System as StatSystem};
+use sysinfo::{Disks, System as InfoSystem};
+use systemstat::{data::CPULoad, data::DelayedMeasurement, Platform, System as StatSystem};
 
 /// Snapshot of the most-recent metric poll (CPU, memory, disk, temperature).
 #[derive(Debug, Clone, PartialEq)]
@@ -87,7 +87,8 @@ pub fn start_polling(interval_ms: u64, app_running: Arc<AtomicBool>) -> PollingH
 struct Poller {
     stats: StatSystem,
     sysinfo: InfoSystem,
-    cpu_load: CpuLoad,
+    disks: Disks,
+    cpu_load: DelayedMeasurement<CPULoad>,
 }
 
 impl Poller {
@@ -97,24 +98,24 @@ impl Poller {
         Ok(Self {
             stats,
             sysinfo: InfoSystem::new(),
+            disks: Disks::new_with_refreshed_list(),
             cpu_load,
         })
     }
 
     fn poll_once(&mut self) -> Result<PollSnapshot, String> {
         let load = self.cpu_load.done().map_err(|e| e.to_string())?;
-        let cpu_percent = ((1.0 - load.idle) * 100.0).clamp(0.0, 100.0);
+        let cpu_percent = ((1.0_f32 - load.idle) * 100.0_f32).clamp(0.0, 100.0);
         self.cpu_load = self.stats.cpu_load_aggregate().map_err(|e| e.to_string())?;
         self.sysinfo.refresh_memory();
-        self.sysinfo.refresh_disks();
+        self.disks.refresh(true);
         let mem_used = self.sysinfo.used_memory();
         let mem_total = self.sysinfo.total_memory();
-        let disk = self
-            .sysinfo
-            .disks()
+        let disks = self.disks.list();
+        let disk = disks
             .iter()
             .find(|disk| disk.mount_point() == Path::new("/"))
-            .or_else(|| self.sysinfo.disks().first());
+            .or_else(|| disks.first());
         let (disk_used_pct, disk_available_kb) = if let Some(disk) = disk {
             let total = disk.total_space();
             let available = disk.available_space();
@@ -127,11 +128,7 @@ impl Poller {
         } else {
             (0.0, None)
         };
-        let temperature_c = self
-            .stats
-            .temperature()
-            .ok()
-            .and_then(|temp| temp.as_celsius());
+        let temperature_c = self.stats.cpu_temp().ok();
         Ok(PollSnapshot {
             cpu_percent,
             mem_used_kb: mem_used,

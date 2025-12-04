@@ -214,11 +214,8 @@ fn overlay_icons(
         return;
     }
     let target = if bar_row == Some(1) { line1 } else { line2 };
-    let icon_char = match icons[0] {
-        Icon::Battery => BATTERY_CHAR,
-        Icon::Arrow => '>',
-        Icon::Heart => HEARTBEAT_CHAR,
-        Icon::Wifi => WIFI_CHAR,
+    let Some(icon_char) = overlay_icon_char(icons[0]) else {
+        return;
     };
     let mut chars: Vec<char> = target.chars().collect();
     if chars.len() < width {
@@ -230,6 +227,15 @@ fn overlay_icons(
         *last = icon_char;
     }
     *target = chars.into_iter().collect();
+}
+
+fn overlay_icon_char(icon: Icon) -> Option<char> {
+    match icon {
+        Icon::Battery => Some(BATTERY_CHAR),
+        Icon::Heart | Icon::OpenHeart => Some(HEARTBEAT_CHAR),
+        Icon::Wifi => Some(WIFI_CHAR),
+        _ => icon.ascii_fallback(),
+    }
 }
 
 #[cfg(test)]

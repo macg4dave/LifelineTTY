@@ -7,7 +7,7 @@ use zstd::stream::{Decoder as ZstdDecoder, Encoder as ZstdEncoder};
 const MAX_DECOMPRESSED_SIZE: usize = 1 * 1024 * 1024;
 
 /// Compression primitives for Milestone F / P14 (payload compression support).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CompressionCodec {
     None,
     Lz4,

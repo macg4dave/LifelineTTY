@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 use std::path::Path;
 
-use super::icons::{parse_display_mode, parse_icons};
+use super::icons::parse_icons;
 use super::{DisplayMode, Icon, DEFAULT_PAGE_TIMEOUT_MS, DEFAULT_SCROLL_MS};
 
 pub const COMMAND_SCHEMA_VERSION: u8 = 1;
@@ -357,7 +357,7 @@ impl RenderFrame {
             None
         };
 
-        let mode = parse_display_mode(payload.mode.clone());
+        let mode = DisplayMode::parse(payload.mode.clone());
         let icons = parse_icons(payload.icons.clone());
 
         let line1 = payload.line1;

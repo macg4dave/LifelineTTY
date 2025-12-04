@@ -1,11 +1,11 @@
 use lifelinetty::{
-    Error,
     lcd::Lcd,
     payload::{
-        CommandMessage, DEFAULT_PAGE_TIMEOUT_MS, DEFAULT_SCROLL_MS, Defaults,
-        decode_command_frame, encode_command_frame,
+        decode_command_frame, encode_command_frame, CommandMessage, Defaults,
+        DEFAULT_PAGE_TIMEOUT_MS, DEFAULT_SCROLL_MS,
     },
     state::RenderState,
+    Error,
 };
 use serde_json::Value;
 

@@ -11,6 +11,8 @@ New modules created under src/app:
 - file_transfer.rs — Milestone C (remote file push/pull) skeleton
 - compression.rs — Milestone F (payload compression) skeleton
 - watchdog.rs — Milestone P15 (heartbeat/watchdog) skeleton
+- negotiation.rs — Milestone B (auto-negotiation) skeleton shared between the connection logic and config loader
+- connection.rs — Milestone B reconnection/handshake driver that wires the new `Negotiator` into the render loop
 
 Each module contains a small API and unit tests so CI can validate the surface area and
 developers can build on top of these placeholders safely.

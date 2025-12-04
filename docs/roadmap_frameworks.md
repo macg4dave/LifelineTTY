@@ -10,6 +10,8 @@ New app modules
 - `src/app/watchdog.rs` — Watchdog for heartbeat expiry checks (P15)
 - `src/app/negotiation.rs` — Negotiator, Role and Capabilities for handshake (Milestone B / P9)
 - `src/app/telemetry.rs` — Telemetry helper to append small logs into CACHE_DIR (P5)
+- `src/app/connection.rs` — Reconnection flow and negotiation handshake driver (Milestone B / P9)
+- `src/negotiation.rs` — Shared capability/role definitions consumed by both the connection logic and the config loader.
 
 New config module
 
@@ -25,6 +27,6 @@ These skeletons are intentionally small but test-covered so downstream work can:
 
 How to expand
 
-1. Pick a skeleton and implement real behaviour with matching unit + integration tests.
+1. Pick a skeleton and implement real behaviour with matching unit + integration tests, starting with Milestone B’s negotiation state machines and fallback wiring.
 2. Keep RAM-only cache usage restricted to `CACHE_DIR` (see `src/lib.rs`).
 3. Maintain the project's quality bar: `cargo fmt`, `cargo clippy`, `cargo test` on x86_64 and ARMv6.

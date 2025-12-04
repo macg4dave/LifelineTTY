@@ -2,8 +2,8 @@ use crate::{
     cli::{RunMode, RunOptions},
     config::Pcf8574Addr,
     config::{
-        Config, DisplayDriver, DEFAULT_BAUD, DEFAULT_COLS, DEFAULT_DEVICE, DEFAULT_ROWS,
-        DEFAULT_SERIAL_TIMEOUT_MS,
+        Config, DisplayDriver, NegotiationConfig, DEFAULT_BAUD, DEFAULT_COLS, DEFAULT_DEVICE,
+        DEFAULT_ROWS, DEFAULT_SERIAL_TIMEOUT_MS,
     },
     lcd::Lcd,
     payload::{Defaults as PayloadDefaults, RenderFrame},
@@ -34,6 +34,7 @@ use crate::serial::backoff::BackoffController;
 use connection::attempt_serial_connect;
 use demo::run_demo;
 pub(crate) use logger::{LogLevel, Logger};
+use negotiation::NegotiationLog;
 use render_loop::run_render_loop;
 
 /// Config for the daemon.
@@ -54,6 +55,7 @@ pub struct AppConfig {
     pub payload_file: Option<String>,
     pub backoff_initial_ms: u64,
     pub backoff_max_ms: u64,
+    pub negotiation: NegotiationConfig,
     pub pcf8574_addr: Pcf8574Addr,
     pub display_driver: DisplayDriver,
     pub log_level: LogLevel,
@@ -81,6 +83,7 @@ impl Default for AppConfig {
             payload_file: None,
             backoff_initial_ms: crate::config::DEFAULT_BACKOFF_INITIAL_MS,
             backoff_max_ms: crate::config::DEFAULT_BACKOFF_MAX_MS,
+            negotiation: NegotiationConfig::default(),
             pcf8574_addr: crate::config::DEFAULT_PCF8574_ADDR,
             display_driver: crate::config::DEFAULT_DISPLAY_DRIVER,
             log_level: LogLevel::default(),
@@ -144,11 +147,22 @@ impl App {
             return render_frame_once(&mut lcd, &frame);
         }
 
-        let (serial_connection, initial_disconnect_reason) =
-            match attempt_serial_connect(&self.logger, &config.device, config.serial_options()) {
-                Ok(port) => (Some(port), None),
-                Err(reason) => (None, Some(reason)),
-            };
+        let mut negotiation_log = NegotiationLog::try_create().unwrap_or_else(|err| {
+            self.logger
+                .warn(format!("negotiation log unavailable: {err}"));
+            NegotiationLog::disabled()
+        });
+
+        let (serial_connection, initial_disconnect_reason) = match attempt_serial_connect(
+            &self.logger,
+            &config.device,
+            config.serial_options(),
+            &config.negotiation,
+            &mut negotiation_log,
+        ) {
+            Ok(port) => (Some(port), None),
+            Err(reason) => (None, Some(reason)),
+        };
         if serial_connection.is_none() {
             let now = Instant::now();
             backoff.mark_failure(now);
@@ -162,6 +176,7 @@ impl App {
             backoff,
             serial_connection,
             initial_disconnect_reason,
+            &mut negotiation_log,
         )
     }
 }
@@ -184,6 +199,7 @@ impl AppConfig {
             payload_file: opts.payload_file,
             backoff_initial_ms: opts.backoff_initial_ms.unwrap_or(config.backoff_initial_ms),
             backoff_max_ms: opts.backoff_max_ms.unwrap_or(config.backoff_max_ms),
+            negotiation: config.negotiation,
             pcf8574_addr: opts
                 .pcf8574_addr
                 .unwrap_or_else(|| config.pcf8574_addr.clone()),
@@ -272,6 +288,7 @@ mod tests {
             scroll_speed_ms: crate::config::DEFAULT_SCROLL_MS,
             page_timeout_ms: crate::config::DEFAULT_PAGE_TIMEOUT_MS,
             button_gpio_pin: None,
+            negotiation: NegotiationConfig::default(),
             backoff_initial_ms: crate::config::DEFAULT_BACKOFF_INITIAL_MS,
             backoff_max_ms: crate::config::DEFAULT_BACKOFF_MAX_MS,
             pcf8574_addr: crate::config::DEFAULT_PCF8574_ADDR,

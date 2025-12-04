@@ -1,6 +1,6 @@
 # LifelineTTY Roadmap (Dec 2025)
 
-Updated 1 Dec 2025
+Updated 4 Dec 2025
 
 LifelineTTY is the successor to SerialLCD: a single Rust daemon for Raspberry Pi 1 (ARMv6) that ingests newline-delimited JSON via UART and keeps a HD44780 LCD in sync. All work listed here must respect the charter in `.github/copilot-instructions.md` — single binary, no network sockets, RAM-disk cache only, CLI flags remain stable (`--run`, `--test-lcd`, `--test-serial`, `--device`, `--baud`, `--cols`, `--rows`).
 
@@ -26,6 +26,13 @@ There is also a short frameworks document that describes the set of skeleton mod
 
 > _Only after B1–B6 are closed should we land anything from the P1–P20 queue or milestone features below._
 
+## Latest progress (4 Dec 2025)
+
+- Milestone A’s command tunnel remains stable, and the render loop still routes `channel:"command"` frames through `CommandBridge`, `CommandExecutor`, and `TunnelController`, streaming stdout/stderr/exit chunks while logging decode failures under `/run/serial_lcd_cache/tunnel/`.
+- Milestone B’s auto-negotiation is now live: `src/app/connection.rs` manages the INIT/hello/hello_ack exchange using `Negotiator`, records role decisions in `NegotiationLog`, and falls back to LCD-only mode when a peer does not understand the protocol. `src/app/negotiation.rs` captures the deterministic preference/role logic plus capability bits.
+- `src/config/loader.rs` now persists the `[negotiation]` block and a top-level `command_allowlist`, so `~/.serial_lcd/config.toml` round-trips cleanly and CLI-driven reconnects reuse the negotiated defaults.
+- Config and tunnel tests were refreshed to reflect the new handshake plumbing and still pass across the suite.
+
 ## Priority queue (P1–P20)
 
 | ID  | Title & scope (inline guardrails) |
@@ -37,7 +44,7 @@ There is also a short frameworks document that describes the set of skeleton mod
 | **P5 (✅ 2 Dec 2025)** | **Serial backoff telemetry**: add structured logging to `src/serial/*` capturing reconnect counts into `/run/serial_lcd_cache/serial_backoff.log`, respecting RAM-only constraint. |
 | **P7 (✅ 3 Dec 2025)** | **CLI integration mode groundwork**: implemented `serialsh` preview flag (gated behind `serialsh-preview` feature), added `ShellContext` preview run path, and tests reflecting the flow. |
 | **P8 (✅ 4 Dec 2025)** | **Bi-directional command tunnel core**: base framing library in `src/payload/parser.rs` for command request/response envelopes (no network). Must reuse newline JSON framing. _(Status: CommandBridge, CommandExecutor, and TunnelController now translate request frames into stdout/stderr/exit responses with Busy/error handling and logging under `/run/serial_lcd_cache/tunnel/`.)_ |
-| **P9 (✅ 4 Dec 2025)** | **Server/client auto-negotiation**: implement handshake state in `src/app/connection.rs`, ensuring deterministic fallback to current behaviour when remote does not understand negotiation packets. _(Status: INIT handshakes emit hello/hello_ack frames with capability bits and automatically fall back to LCD-only mode on legacy peers.)_ |
+| **P9 (✅ 4 Dec 2025)** | **Server/client auto-negotiation**: implement handshake state in `src/app/connection.rs`, ensuring deterministic fallback to current behaviour when remote does not understand negotiation packets. _(Status: INIT handshakes emit hello/hello_ack frames with capability bits, handshake results are recorded via `NegotiationLog`, and legacy peers trigger LCD-only fallbacks.)_ |
 | **P10** | **Remote file push/pull transport**: extend payload schema for chunk IDs, checksums, resume markers; add tests covering corruption detection. Respect RAM-only buffering. |
 | **P11** | **Live hardware polling agent**: modular polling routines (CPU %, temps, disk) gated via config, pushing frames through existing render loop without blocking serial ingestion. |
 | **P13** | **JSON-protocol strict mode**: introduce schema validation (Serde enums, length caps) and optional `"schema_version"` header to reject malformed inputs gracefully. |
@@ -96,7 +103,7 @@ Update this section or `docs/createstocheck.md` whenever priorities shift so the
 
 ## Milestones (big features & dependencies)
 
-### Milestone A — Bi-Directional Command Tunnel
+### Milestone A — Bi-Directional Command Tunnel (completed 4 Dec 2025)
 
 - **Goal**: “one-line commands in, stdout/stderr out” over UART — effectively a remote bash shim.
 - **Scope**: `src/app/connection.rs`, `src/serial/*`, CLI flag gating (`--serialsh`). Must preserve newline JSON framing by encapsulating command text + stdout chunks in structured payloads.
@@ -115,9 +122,9 @@ Milestone A is now **complete**: the `CommandBridge`/`CommandEvent` pipeline rou
 
 The previously cited plan items are now satisfied: the executor handles Busy/Exit transitions, the runnable shell bears out command round-trips (see the new smoke coverage in `tests/bin_smoke.rs`), and CRC tampering is rejected early (now guarded by `tests/integration_mock.rs`). With Milestone A shipped, the focus moves on to Milestone B (auto-negotiation) and the P9+ priorities that build on a stable command tunnel.
 
-### Milestone B — Server/Client Auto-Negotiation
+### Milestone B — Server/Client Auto-Negotiation (completed 4 Dec 2025)
 
-- **Goal**: Both endpoints boot without config edits; handshake decides who acts as command server vs client.
+- **Goal**: Both endpoints boot without config edits; handshake decides who acts as command server vs client. The completed flow now records the negotiated `NegotiationConfig` in `~/.serial_lcd/config.toml`, writes `NegotiationLog` entries to `/run/serial_lcd_cache`, and replays the preferred role/timer settings during reconnects.
 - **Scope**: state machine additions in `src/app/lifecycle.rs` + `src/app/connection.rs`, handshake payload definitions in `src/payload/parser.rs`.
 - **Dependencies**: P9, P19. Needs fallback path to classic “LCD-only” mode when remote lacks support.
 - **Constraints**: handshake occurs after serial open but before LCD writes; any timeout must revert to default LCD display to avoid blank screens.
@@ -230,7 +237,7 @@ The previously cited plan items are now satisfied: the executor handles Busy/Exi
 ### Tracking & next steps
 
 - Close B1–B6, then tackle P1–P4 in order to stabilize the base.
-- Once telemetry + schema groundwork (P5–P13) is stable, schedule milestone A/B builds.
+- With Milestones A and B shipped, begin scheduling Milestone C/D work alongside the remaining P10–P15 priorities (heartbeats, compression, chunked transfers).
 - Maintain this roadmap alongside `docs/architecture.md` and update when priorities shift (always annotate date + reason).
 
 ## Implementation details (P21 — hd44780-driver migration)

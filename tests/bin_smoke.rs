@@ -236,7 +236,9 @@ mod serialsh_smoke {
             serial.writes(),
             &[
                 "INIT".to_string(),
-                encoded(TunnelMsgOwned::CmdRequest { cmd: "echo hi".into() })
+                encoded(TunnelMsgOwned::CmdRequest {
+                    cmd: "echo hi".into()
+                })
             ]
         );
     }

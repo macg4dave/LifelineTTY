@@ -11,6 +11,7 @@ use super::connection::attempt_serial_connect;
 use super::events::{CommandBridge, CommandExecutor, ScrollOffsets};
 use super::input::Button;
 use super::lifecycle::{create_shutdown_flag, render_shutdown};
+use super::negotiation::NegotiationLog;
 use super::tunnel::TunnelController;
 use super::{AppConfig, LogLevel, Logger};
 use crate::{
@@ -77,6 +78,7 @@ pub(super) fn run_render_loop(
     mut backoff: BackoffController,
     mut serial_connection: Option<SerialPort>,
     initial_disconnect_reason: Option<SerialFailureKind>,
+    negotiation_log: &mut NegotiationLog,
 ) -> Result<()> {
     let mut state = crate::state::RenderState::new(Some(PayloadDefaults {
         scroll_speed_ms: config.scroll_speed_ms,
@@ -185,7 +187,13 @@ pub(super) fn run_render_loop(
                 ));
                 max_backoff_warned = true;
             }
-            match attempt_serial_connect(logger, &config.device, config.serial_options()) {
+            match attempt_serial_connect(
+                logger,
+                &config.device,
+                config.serial_options(),
+                &config.negotiation,
+                negotiation_log,
+            ) {
                 Ok(p) => {
                     log_backoff(
                         logger,

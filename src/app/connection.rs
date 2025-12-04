@@ -1,28 +1,29 @@
 use super::Logger;
-use crate::app::negotiation::{Capabilities, Negotiator, Role, RolePreference};
-use crate::serial::{classify_error, LineIo, SerialFailureKind, SerialOptions, SerialPort};
-use serde::Deserialize;
-use serde_json::json;
-use std::{
-    str::FromStr,
-    time::{Duration, Instant},
+use crate::{
+    app::negotiation::{NegotiationLog, Negotiator},
+    config::NegotiationConfig,
+    negotiation::{Capabilities, ControlCaps, ControlFrame, Role},
+    serial::{classify_error, LineIo, SerialFailureKind, SerialOptions, SerialPort},
 };
+use serde_json;
+use std::str::FromStr;
+use std::time::{Duration, Instant};
 
 struct NegotiationResult {
     role: Role,
-    pending_frame: Option<String>,
+    remote_role: Option<Role>,
+    remote_caps: Option<Capabilities>,
     fallback: bool,
+    pending_frame: Option<String>,
 }
-
-const NEGOTIATION_TIMEOUT_MS: u64 = 500;
-const NEGOTIATION_NODE_ID: u32 = 42;
-const NEGOTIATION_PROTO_VERSION: u8 = 1;
 
 /// Attempt to open the serial port, send the INIT handshake, and log outcomes.
 pub(crate) fn attempt_serial_connect(
     logger: &Logger,
     device: &str,
     options: SerialOptions,
+    negotiation: &NegotiationConfig,
+    log: &mut NegotiationLog,
 ) -> Result<SerialPort, SerialFailureKind> {
     match SerialPort::connect(device, options) {
         Ok(mut serial_connection) => {
@@ -32,13 +33,25 @@ pub(crate) fn attempt_serial_connect(
                 return Err(reason);
             }
             logger.info("serial connected");
-            let negotiation = negotiate_handshake(&mut serial_connection, logger);
-            if negotiation.fallback {
+            log.record("negotiation: serial connected");
+            let negotiation_result =
+                negotiate_handshake(&mut serial_connection, logger, negotiation, log);
+            if negotiation_result.fallback {
                 logger.info("negotiation: falling back to legacy LCD-only mode");
+                log.record("negotiation: falling back to legacy mode");
             } else {
+                let caps_bits = negotiation_result
+                    .remote_caps
+                    .as_ref()
+                    .map(|caps| caps.bits())
+                    .unwrap_or(0);
                 logger.info(format!(
-                    "negotiation: role decided as {}",
-                    negotiation.role.as_str()
+                    "negotiation: role decided as {} remote_caps=0x{caps_bits:08x}",
+                    negotiation_result.role.as_str()
+                ));
+                log.record(format!(
+                    "negotiation: role={} remote_caps=0x{caps_bits:08x}",
+                    negotiation_result.role.as_str()
                 ));
             }
             Ok(serial_connection)
@@ -53,30 +66,25 @@ pub(crate) fn attempt_serial_connect(
     }
 }
 
-fn negotiate_handshake<IO>(io: &mut IO, logger: &Logger) -> NegotiationResult
+fn negotiate_handshake<IO>(
+    io: &mut IO,
+    logger: &Logger,
+    config: &NegotiationConfig,
+    log: &mut NegotiationLog,
+) -> NegotiationResult
 where
     IO: LineIo,
 {
-    let mut negotiator = Negotiator::new(
-        Capabilities {
-            supports_tunnel: true,
-            supports_compression: false,
-        },
-        RolePreference::PreferServer,
-    );
-    let hello = json!({
-        "type": "hello",
-        "proto_version": NEGOTIATION_PROTO_VERSION,
-        "node_id": NEGOTIATION_NODE_ID,
-        "caps": { "bits": negotiator.local_caps().bits() },
-        "pref": negotiator.preference().as_str(),
-    });
-    if io.send_command_line(&hello.to_string()).is_err() {
-        logger.warn("negotiation: failed to write hello frame");
-        return fallback_result();
+    let negotiator = Negotiator::new(config);
+    let hello_frame = negotiator.hello_frame();
+    log.record("negotiation: sending hello");
+    if !send_control_frame(io, &hello_frame, "hello", logger, log) {
+        logger.warn("negotiation: failed to send hello frame");
+        log.record("negotiation: failed to send hello frame");
+        return fallback_result(None);
     }
 
-    let deadline = Instant::now() + Duration::from_millis(NEGOTIATION_TIMEOUT_MS);
+    let deadline = Instant::now() + Duration::from_millis(config.timeout_ms);
     let mut buffer = String::new();
 
     while Instant::now() < deadline {
@@ -87,75 +95,137 @@ where
                 if trimmed.is_empty() {
                     continue;
                 }
-                match parse_control_frame(trimmed) {
-                    Some(ControlFrame::HelloAck {
+                match serde_json::from_str::<ControlFrame>(trimmed) {
+                    Ok(ControlFrame::Hello {
+                        node_id,
+                        caps,
+                        pref,
+                        ..
+                    }) => {
+                        let (remote, pref_err) = crate::app::negotiation::RemoteHello::from_parts(
+                            node_id, &pref, caps.bits,
+                        );
+                        if let Some(reason) = pref_err {
+                            logger.warn(format!(
+                                "negotiation: invalid preference '{pref}': {reason}"
+                            ));
+                            log.record(format!(
+                                "negotiation: invalid preference '{pref}': {reason}"
+                            ));
+                        }
+                        log.record(format!(
+                            "negotiation: hello received node={} pref={} caps=0x{:08x}",
+                            remote.node_id,
+                            remote.preference.as_str(),
+                            remote.capabilities.bits()
+                        ));
+                        let decision = negotiator.decide_roles(&remote);
+                        let ack = ControlFrame::HelloAck {
+                            chosen_role: decision.remote_role.as_str().to_string(),
+                            peer_caps: ControlCaps {
+                                bits: negotiator.local_caps().bits(),
+                            },
+                        };
+                        if !send_control_frame(io, &ack, "hello_ack", logger, log) {
+                            logger.warn("negotiation: failed to send hello_ack");
+                            log.record("negotiation: failed to send hello_ack");
+                            return fallback_result(None);
+                        }
+                        log.record(format!(
+                            "negotiation: sent hello_ack remote_role={} local_role={}",
+                            decision.remote_role.as_str(),
+                            decision.local_role.as_str()
+                        ));
+                        continue;
+                    }
+                    Ok(ControlFrame::HelloAck {
                         chosen_role,
-                        peer_caps: _peer_caps,
+                        peer_caps,
                     }) => {
                         let role = Role::from_str(&chosen_role).unwrap_or(Role::Server);
-                        negotiator.set_role(role.clone());
-                        logger.info("negotiation: received hello_ack");
+                        let remote_role = role.opposite();
+                        log.record(format!(
+                            "negotiation: hello_ack received role={} caps=0x{:08x}",
+                            role.as_str(),
+                            peer_caps.bits
+                        ));
                         return NegotiationResult {
                             role,
-                            pending_frame: None,
+                            remote_role: Some(remote_role),
+                            remote_caps: Some(Capabilities::from_bits(peer_caps.bits)),
                             fallback: false,
+                            pending_frame: None,
                         };
                     }
-                    Some(ControlFrame::LegacyFallback) => {
-                        logger.info("negotiation: peer requested legacy fallback");
-                        break;
+                    Ok(ControlFrame::LegacyFallback) => {
+                        log.record("negotiation: legacy_fallback received");
+                        return fallback_result(None);
                     }
-                    Some(ControlFrame::Hello { .. }) => continue,
-                    None => {
-                        return NegotiationResult {
-                            role: Role::Server,
-                            pending_frame: Some(trimmed.to_string()),
-                            fallback: true,
-                        };
+                    Err(_) => {
+                        log.record(format!(
+                            "negotiation: ignoring non-control frame during handshake: {trimmed}"
+                        ));
+                        return fallback_result(Some(trimmed.to_string()));
                     }
                 }
             }
             Err(err) => {
                 logger.warn(format!("negotiation: read failed: {err}"));
+                log.record(format!("negotiation: read failed: {err}"));
                 break;
             }
         }
     }
 
-    fallback_result()
+    log.record("negotiation: timed out".to_string());
+    let _ = send_control_frame(
+        io,
+        &ControlFrame::LegacyFallback,
+        "legacy_fallback",
+        logger,
+        log,
+    );
+    fallback_result(None)
 }
 
-fn fallback_result() -> NegotiationResult {
+fn fallback_result(pending_frame: Option<String>) -> NegotiationResult {
     NegotiationResult {
         role: Role::Server,
-        pending_frame: None,
+        remote_role: None,
+        remote_caps: None,
         fallback: true,
+        pending_frame,
     }
 }
 
-fn parse_control_frame(raw: &str) -> Option<ControlFrame> {
-    serde_json::from_str(raw).ok()
-}
-
-#[derive(Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum ControlFrame {
-    Hello {
-        proto_version: u8,
-        node_id: u32,
-        caps: ControlCaps,
-        pref: String,
-    },
-    HelloAck {
-        chosen_role: String,
-        peer_caps: ControlCaps,
-    },
-    LegacyFallback,
-}
-
-#[derive(Deserialize)]
-struct ControlCaps {
-    bits: u32,
+fn send_control_frame<IO>(
+    io: &mut IO,
+    frame: &ControlFrame,
+    label: &str,
+    logger: &Logger,
+    log: &mut NegotiationLog,
+) -> bool
+where
+    IO: LineIo,
+{
+    match serde_json::to_string(frame) {
+        Ok(payload) => match io.send_command_line(&payload) {
+            Ok(()) => {
+                log.record(format!("negotiation: sent {label} frame"));
+                true
+            }
+            Err(err) => {
+                logger.warn(format!("negotiation: failed to send {label}: {err}"));
+                log.record(format!("negotiation: failed to send {label}: {err}"));
+                false
+            }
+        },
+        Err(err) => {
+            logger.warn(format!("negotiation: failed to encode {label}: {err}"));
+            log.record(format!("negotiation: failed to encode {label}: {err}"));
+            false
+        }
+    }
 }
 
 #[cfg(test)]
@@ -196,10 +266,9 @@ mod tests {
             if let Some(line) = self.responses.pop_front() {
                 buf.clear();
                 buf.push_str(&line);
-                Ok(line.len())
-            } else {
-                Ok(0)
+                return Ok(line.len());
             }
+            Ok(0)
         }
     }
 
@@ -212,9 +281,11 @@ mod tests {
         let ack = r#"{"type":"hello_ack","chosen_role":"client","peer_caps":{"bits":3}}"#;
         let mut io = FakeLineIo::with_responses(vec![ack]);
         let logger = new_logger();
-        let result = negotiate_handshake(&mut io, &logger);
+        let mut log = NegotiationLog::disabled();
+        let result = negotiate_handshake(&mut io, &logger, &NegotiationConfig::default(), &mut log);
         assert!(!result.fallback);
         assert_eq!(result.role, Role::Client);
+        assert_eq!(result.remote_role, Some(Role::Server));
         assert!(io
             .sent()
             .iter()
@@ -222,21 +293,27 @@ mod tests {
     }
 
     #[test]
-    fn negotiation_legacy_fallback_sets_flag() {
-        let fallback = r#"{"type":"legacy_fallback"}"#;
-        let mut io = FakeLineIo::with_responses(vec![fallback]);
+    fn negotiation_hello_triggers_ack_and_success() {
+        let hello = r#"{"type":"hello","proto_version":1,"node_id":99,"caps":{"bits":2},"pref":"prefer_server"}"#;
+        let ack = r#"{"type":"hello_ack","chosen_role":"client","peer_caps":{"bits":2}}"#;
+        let mut io = FakeLineIo::with_responses(vec![hello, ack]);
         let logger = new_logger();
-        let result = negotiate_handshake(&mut io, &logger);
-        assert!(result.fallback);
-        assert!(result.pending_frame.is_none());
+        let mut log = NegotiationLog::disabled();
+        let result = negotiate_handshake(&mut io, &logger, &NegotiationConfig::default(), &mut log);
+        assert!(!result.fallback);
+        assert!(io
+            .sent()
+            .iter()
+            .any(|line| line.contains("\"type\":\"hello_ack\"")));
     }
 
     #[test]
     fn negotiation_unknown_frame_promotes_fallback_with_frame() {
-        let unknown = r#"{"custom":"payload"}"#;
+        let unknown = r#"{"payload":"render"}"#;
         let mut io = FakeLineIo::with_responses(vec![unknown]);
         let logger = new_logger();
-        let result = negotiate_handshake(&mut io, &logger);
+        let mut log = NegotiationLog::disabled();
+        let result = negotiate_handshake(&mut io, &logger, &NegotiationConfig::default(), &mut log);
         assert!(result.fallback);
         assert_eq!(result.pending_frame.as_deref(), Some(unknown));
     }

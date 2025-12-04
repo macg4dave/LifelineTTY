@@ -58,7 +58,11 @@ button_gpio_pin = {}\n\
 pcf8574_addr = {}\n\
 display_driver = {}\n\
 backoff_initial_ms = {}\n\
-backoff_max_ms = {}\n",
+backoff_max_ms = {}\n\
+[negotiation]\n\
+node_id = {}\n\
+preference = \"{}\"\n\
+timeout_ms = {}\n",
         config.device,
         config.baud,
         config.flow_control,
@@ -77,19 +81,31 @@ backoff_max_ms = {}\n",
         super::format_pcf_addr(&config.pcf8574_addr),
         super::format_display_driver(&config.display_driver),
         config.backoff_initial_ms,
-        config.backoff_max_ms
+        config.backoff_max_ms,
+        config.negotiation.node_id,
+        config.negotiation.preference,
+        config.negotiation.timeout_ms,
     );
-    let contents = format!("{contents}command_allowlist = {}\n", allowlist);
+    let contents = format!("{contents}\ncommand_allowlist = {}\n", allowlist);
     fs::write(path, contents)?;
     Ok(())
 }
 
 pub fn parse(raw: &str) -> Result<Config> {
     let mut cfg = Config::default();
+    let mut current_section: Option<&str> = None;
 
     for (idx, line) in raw.lines().enumerate() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
+            if trimmed.is_empty() {
+                current_section = None;
+            }
+            continue;
+        }
+
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            current_section = Some(trimmed.trim_matches(|c| c == '[' || c == ']'));
             continue;
         }
 
@@ -99,7 +115,12 @@ pub fn parse(raw: &str) -> Result<Config> {
 
         let key = key.trim();
         let value = value.trim().trim_matches('"');
-        match key {
+        let full_key = if let Some(section) = current_section {
+            format!("{section}.{key}")
+        } else {
+            key.to_string()
+        };
+        match full_key.as_str() {
             "device" => cfg.device = value.to_string(),
             "baud" => {
                 cfg.baud = value.parse().map_err(|_| {
@@ -169,6 +190,27 @@ pub fn parse(raw: &str) -> Result<Config> {
             "backoff_max_ms" => {
                 cfg.backoff_max_ms = value.parse().map_err(|_| {
                     Error::InvalidArgs(format!("invalid backoff_max_ms on line {}", idx + 1))
+                })?;
+            }
+            "negotiation.node_id" => {
+                cfg.negotiation.node_id = value.parse().map_err(|_| {
+                    Error::InvalidArgs(format!("invalid negotiation.node_id on line {}", idx + 1))
+                })?;
+            }
+            "negotiation.preference" => {
+                cfg.negotiation.preference = value.parse().map_err(|e: String| {
+                    Error::InvalidArgs(format!(
+                        "invalid negotiation.preference on line {}: {e}",
+                        idx + 1
+                    ))
+                })?;
+            }
+            "negotiation.timeout_ms" => {
+                cfg.negotiation.timeout_ms = value.parse().map_err(|_| {
+                    Error::InvalidArgs(format!(
+                        "invalid negotiation.timeout_ms on line {}",
+                        idx + 1
+                    ))
                 })?;
             }
             "button_gpio_pin" => {
@@ -388,6 +430,7 @@ mod tests {
             display_driver: DisplayDriver::Hd44780Driver,
             backoff_initial_ms: DEFAULT_BACKOFF_INITIAL_MS,
             backoff_max_ms: DEFAULT_BACKOFF_MAX_MS,
+            negotiation: crate::config::NegotiationConfig::default(),
             command_allowlist: Vec::new(),
         };
         save_to_path(&cfg, &path).unwrap();

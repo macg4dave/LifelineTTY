@@ -1,175 +1,144 @@
-use std::str::FromStr;
+use crate::{
+    config::NegotiationConfig,
+    negotiation::{
+        Capabilities, ControlCaps, ControlFrame, Role, RolePreference, PROTOCOL_VERSION,
+    },
+    CACHE_DIR,
+};
+use std::{
+    fs::{self, OpenOptions},
+    io::Write,
+    path::Path,
+    str::FromStr,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
-/// Negotiation/handshake skeleton for Milestone B / P9
-/// This module defines a minimal capability bitmap and a small state machine
-/// so other parts of the app can wire up negotiation behavior during testing.
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Role {
-    Unknown,
-    Server,
-    Client,
-}
-
-impl Role {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Role::Unknown => "unknown",
-            Role::Server => "server",
-            Role::Client => "client",
-        }
-    }
-}
-
-impl FromStr for Role {
-    type Err = String;
-
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s.to_ascii_lowercase().as_str() {
-            "server" => Ok(Role::Server),
-            "client" => Ok(Role::Client),
-            "unknown" => Ok(Role::Unknown),
-            other => Err(format!("invalid role '{other}', expected server|client")),
-        }
-    }
-}
-
-/// Local capability flags exchanged during the handshake.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Capabilities {
-    pub supports_tunnel: bool,
-    pub supports_compression: bool,
-}
-
-impl Capabilities {
-    pub const HANDSHAKE_V1: u32 = 0b0000_0001;
-    pub const CMD_TUNNEL_V1: u32 = 0b0000_0010;
-    pub const LCD_V2: u32 = 0b0000_0100;
-    pub const HEARTBEAT_V1: u32 = 0b0000_1000;
-    pub const FILE_XFER_V1: u32 = 0b0001_0000;
-
-    pub fn bits(&self) -> u32 {
-        let mut bits = Self::HANDSHAKE_V1;
-        if self.supports_tunnel {
-            bits |= Self::CMD_TUNNEL_V1;
-        }
-        if self.supports_compression {
-            bits |= Self::FILE_XFER_V1;
-        }
-        bits
-    }
-
-    pub fn from_bits(bits: u32) -> Self {
-        Self {
-            supports_tunnel: bits & Self::CMD_TUNNEL_V1 != 0,
-            supports_compression: bits & Self::FILE_XFER_V1 != 0,
-        }
-    }
-}
-
-impl Default for Capabilities {
-    fn default() -> Self {
-        Self {
-            supports_tunnel: false,
-            supports_compression: false,
-        }
-    }
-}
-
-/// Indicates which role the local node prefers during the handshake.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RolePreference {
-    PreferServer,
-    PreferClient,
-    NoPreference,
-}
-
-impl Default for RolePreference {
-    fn default() -> Self {
-        RolePreference::NoPreference
-    }
-}
-
-impl RolePreference {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            RolePreference::PreferServer => "prefer_server",
-            RolePreference::PreferClient => "prefer_client",
-            RolePreference::NoPreference => "no_preference",
-        }
-    }
-}
-
-impl FromStr for RolePreference {
-    type Err = String;
-
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s.to_ascii_lowercase().as_str() {
-            "prefer_server" => Ok(RolePreference::PreferServer),
-            "prefer_client" => Ok(RolePreference::PreferClient),
-            "no_preference" | "none" => Ok(RolePreference::NoPreference),
-            other => Err(format!("invalid preference '{other}'")),
-        }
-    }
-}
-
+/// Tracks the local node's handshake capabilities, node ID, and preference.
 pub struct Negotiator {
-    role: Role,
-    local: Capabilities,
+    local_caps: Capabilities,
     preference: RolePreference,
+    node_id: u32,
 }
 
 impl Negotiator {
-    pub fn new(local_caps: Capabilities, preference: RolePreference) -> Self {
+    pub fn new(config: &NegotiationConfig) -> Self {
         Self {
-            role: Role::Unknown,
-            local: local_caps,
-            preference,
+            local_caps: Capabilities {
+                supports_tunnel: true,
+                supports_compression: false,
+                supports_heartbeat: true,
+            },
+            preference: config.preference,
+            node_id: config.node_id,
         }
     }
 
-    /// Start the negotiation and return the decided role and remote caps (stubbed)
-    pub fn negotiate(&mut self, _remote_hello: &str) -> crate::Result<(Role, Capabilities)> {
-        if self.local.supports_tunnel {
-            self.role = Role::Server;
-        } else {
-            self.role = Role::Client;
+    pub fn hello_frame(&self) -> ControlFrame {
+        ControlFrame::Hello {
+            proto_version: PROTOCOL_VERSION,
+            node_id: self.node_id,
+            caps: ControlCaps {
+                bits: self.local_caps.bits(),
+            },
+            pref: self.preference.as_str().to_string(),
         }
-        Ok((self.role.clone(), Capabilities::default()))
-    }
-
-    pub fn set_role(&mut self, role: Role) {
-        self.role = role;
-    }
-
-    pub fn role(&self) -> &Role {
-        &self.role
     }
 
     pub fn local_caps(&self) -> &Capabilities {
-        &self.local
+        &self.local_caps
     }
 
-    pub fn preference(&self) -> RolePreference {
-        self.preference
+    pub fn decide_roles(&self, remote: &RemoteHello) -> NegotiationDecision {
+        let local_rank = self.preference.priority_rank();
+        let remote_rank = remote.preference.priority_rank();
+        let local_wins_server = if local_rank != remote_rank {
+            local_rank > remote_rank
+        } else {
+            self.node_id >= remote.node_id
+        };
+        let local_role = if local_wins_server {
+            Role::Server
+        } else {
+            Role::Client
+        };
+        let remote_role = if local_wins_server {
+            Role::Client
+        } else {
+            Role::Server
+        };
+        NegotiationDecision {
+            local_role,
+            remote_role,
+        }
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// Represents the paired role decisions for the local and remote peers.
+pub struct NegotiationDecision {
+    pub local_role: Role,
+    pub remote_role: Role,
+}
 
-    #[test]
-    fn negotiator_chooses_role() {
-        let mut n = Negotiator::new(
-            Capabilities {
-                supports_tunnel: true,
-                supports_compression: false,
-            },
-            RolePreference::default(),
-        );
-        let (role, caps) = n.negotiate("{}").unwrap();
-        assert_eq!(role, Role::Server);
-        assert_eq!(caps, Capabilities::default());
+/// A parsed hello frame from the remote peer.
+pub struct RemoteHello {
+    pub node_id: u32,
+    pub preference: RolePreference,
+    pub capabilities: Capabilities,
+}
+
+impl RemoteHello {
+    pub fn from_parts(node_id: u32, pref: &str, bits: u32) -> (Self, Option<String>) {
+        match RolePreference::from_str(pref) {
+            Ok(preference) => (
+                Self {
+                    node_id,
+                    preference,
+                    capabilities: Capabilities::from_bits(bits),
+                },
+                None,
+            ),
+            Err(reason) => (
+                Self {
+                    node_id,
+                    preference: RolePreference::NoPreference,
+                    capabilities: Capabilities::from_bits(bits),
+                },
+                Some(reason),
+            ),
+        }
+    }
+}
+
+/// Logs negotiation states into `/run/serial_lcd_cache/logs/negotiation.log`.
+pub struct NegotiationLog {
+    file: Option<std::fs::File>,
+}
+
+impl NegotiationLog {
+    pub fn try_create() -> std::io::Result<Self> {
+        let log_path = Path::new(CACHE_DIR).join("logs").join("negotiation.log");
+        if let Some(parent) = log_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(log_path)?;
+        Ok(Self { file: Some(file) })
+    }
+
+    pub fn disabled() -> Self {
+        Self { file: None }
+    }
+
+    pub fn record(&mut self, message: impl AsRef<str>) {
+        if let Some(file) = self.file.as_mut() {
+            let ts = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs_f32())
+                .unwrap_or(0.0);
+            let _ = writeln!(file, "[{ts:.3}] {}", message.as_ref());
+        }
     }
 }

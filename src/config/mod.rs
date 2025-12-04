@@ -1,4 +1,5 @@
 use crate::{
+    negotiation::RolePreference,
     serial::{DtrBehavior, FlowControlMode, ParityMode, StopBitsMode},
     Error, Result,
 };
@@ -26,8 +27,31 @@ pub const DEFAULT_BACKOFF_MAX_MS: u64 = 10_000;
 pub const DEFAULT_SERIAL_TIMEOUT_MS: u64 = 500;
 pub const MIN_SERIAL_TIMEOUT_MS: u64 = 50;
 pub const MAX_SERIAL_TIMEOUT_MS: u64 = 60_000;
+pub const DEFAULT_NEGOTIATION_NODE_ID: u32 = 42;
+pub const DEFAULT_NEGOTIATION_TIMEOUT_MS: u64 = 1_000;
+pub const MIN_NEGOTIATION_TIMEOUT_MS: u64 = 250;
+pub const MAX_NEGOTIATION_TIMEOUT_MS: u64 = 5_000;
+pub const NEGOTIATION_SECTION_NAME: &str = "negotiation";
 const CONFIG_DIR_NAME: &str = ".serial_lcd";
 const CONFIG_FILE_NAME: &str = "config.toml";
+
+/// Settings that control how this node participates in auto-negotiation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NegotiationConfig {
+    pub node_id: u32,
+    pub preference: RolePreference,
+    pub timeout_ms: u64,
+}
+
+impl Default for NegotiationConfig {
+    fn default() -> Self {
+        Self {
+            node_id: DEFAULT_NEGOTIATION_NODE_ID,
+            preference: RolePreference::default(),
+            timeout_ms: DEFAULT_NEGOTIATION_TIMEOUT_MS,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pcf8574Addr {
@@ -100,6 +124,7 @@ pub struct Config {
     pub display_driver: DisplayDriver,
     pub backoff_initial_ms: u64,
     pub backoff_max_ms: u64,
+    pub negotiation: NegotiationConfig,
     pub command_allowlist: Vec<String>,
 }
 
@@ -122,6 +147,7 @@ impl Default for Config {
             display_driver: DEFAULT_DISPLAY_DRIVER,
             backoff_initial_ms: DEFAULT_BACKOFF_INITIAL_MS,
             backoff_max_ms: DEFAULT_BACKOFF_MAX_MS,
+            negotiation: NegotiationConfig::default(),
             command_allowlist: Vec::new(),
         }
     }
@@ -194,6 +220,13 @@ pub(crate) fn validate(cfg: &Config) -> Result<()> {
     {
         return Err(Error::InvalidArgs(format!(
             "serial_timeout_ms must be between {MIN_SERIAL_TIMEOUT_MS} and {MAX_SERIAL_TIMEOUT_MS}"
+        )));
+    }
+    if cfg.negotiation.timeout_ms < MIN_NEGOTIATION_TIMEOUT_MS
+        || cfg.negotiation.timeout_ms > MAX_NEGOTIATION_TIMEOUT_MS
+    {
+        return Err(Error::InvalidArgs(format!(
+            "negotiation.timeout_ms must be between {MIN_NEGOTIATION_TIMEOUT_MS} and {MAX_NEGOTIATION_TIMEOUT_MS}"
         )));
     }
     Ok(())
@@ -304,6 +337,7 @@ mod tests {
             display_driver: DisplayDriver::InTree,
             backoff_initial_ms: DEFAULT_BACKOFF_INITIAL_MS,
             backoff_max_ms: DEFAULT_BACKOFF_MAX_MS,
+            negotiation: NegotiationConfig::default(),
             command_allowlist: Vec::new(),
         };
         cfg.save_to_path(&path).unwrap();

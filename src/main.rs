@@ -1,6 +1,6 @@
 #[cfg(feature = "serialsh-preview")]
 use lifelinetty::app::serial_shell;
-#[cfg(not(feature = "serialsh"))]
+#[cfg(not(feature = "serialsh-preview"))]
 use lifelinetty::Error;
 use lifelinetty::{
     app::App,

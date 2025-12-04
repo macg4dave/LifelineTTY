@@ -1,8 +1,13 @@
 use lifelinetty::{
+    Error,
     lcd::Lcd,
-    payload::{Defaults, DEFAULT_PAGE_TIMEOUT_MS, DEFAULT_SCROLL_MS},
+    payload::{
+        CommandMessage, DEFAULT_PAGE_TIMEOUT_MS, DEFAULT_SCROLL_MS, Defaults,
+        decode_command_frame, encode_command_frame,
+    },
     state::RenderState,
 };
+use serde_json::Value;
 
 #[test]
 fn integration_parses_and_states() {
@@ -28,4 +33,21 @@ fn smoke_lcd_write_lines_stub() {
     )
     .unwrap();
     lcd.write_lines("HELLO", "WORLD").unwrap();
+}
+
+#[test]
+fn command_frame_detects_bad_crc() {
+    let msg = CommandMessage::Request {
+        request_id: 1,
+        cmd: "echo hi".into(),
+        scratch_path: None,
+    };
+    let encoded = encode_command_frame(&msg).expect("encode frame");
+    let mut value: Value = serde_json::from_str(&encoded).expect("deserialize frame");
+    if let Value::Object(map) = &mut value {
+        map.insert("crc32".into(), Value::from(0));
+    }
+    let tampered = serde_json::to_string(&value).expect("serialize tampered");
+    let err = decode_command_frame(&tampered).unwrap_err();
+    assert!(matches!(err, Error::ChecksumMismatch));
 }

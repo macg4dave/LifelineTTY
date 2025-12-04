@@ -184,3 +184,81 @@ display_driver = "hd44780-driver"
         assert_eq!(cfg.display_driver, DisplayDriver::Hd44780Driver);
     });
 }
+
+#[cfg(feature = "serialsh-preview")]
+mod serialsh_smoke {
+    use super::*;
+    use lifelinetty::app::serial_shell::{drive_serial_shell_loop, SerialShellTransport};
+    use lifelinetty::payload::{encode_tunnel_msg, TunnelMsgOwned};
+    use lifelinetty::serial::fake::FakeSerialPort;
+    use lifelinetty::Result;
+    use std::io::Cursor;
+
+    fn encoded(msg: TunnelMsgOwned) -> String {
+        encode_tunnel_msg(&msg).expect("failed to encode tunnel frame")
+    }
+
+    impl SerialShellTransport for FakeSerialPort {
+        fn send_command_line(&mut self, line: &str) -> Result<()> {
+            FakeSerialPort::send_command_line(self, line)
+        }
+
+        fn read_message_line(&mut self, buf: &mut String) -> Result<usize> {
+            FakeSerialPort::read_message_line(self, buf)
+        }
+    }
+
+    #[test]
+    fn serial_shell_round_trip_delivers_output() {
+        let mut serial = FakeSerialPort::new(vec![
+            Ok(encoded(TunnelMsgOwned::Stdout {
+                chunk: b"hello".to_vec(),
+            })),
+            Ok(encoded(TunnelMsgOwned::Stderr {
+                chunk: b"warn".to_vec(),
+            })),
+            Ok(encoded(TunnelMsgOwned::Exit { code: 42 })),
+        ]);
+        let mut input = Cursor::new("echo hi\nexit\n");
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+
+        let exit_code = drive_serial_shell_loop(&mut serial, &mut input, &mut stdout, &mut stderr)
+            .expect("serial shell failed");
+
+        assert_eq!(exit_code, 42);
+        let out_text = String::from_utf8_lossy(&stdout);
+        assert!(out_text.contains("serialsh> "));
+        assert!(out_text.contains("hello"));
+        let err_text = String::from_utf8_lossy(&stderr);
+        assert!(err_text.contains("warn"));
+        assert_eq!(
+            serial.writes(),
+            &[
+                "INIT".to_string(),
+                encoded(TunnelMsgOwned::CmdRequest { cmd: "echo hi".into() })
+            ]
+        );
+    }
+
+    #[test]
+    fn serial_shell_busy_response_returns_one() {
+        let mut serial = FakeSerialPort::new(vec![Ok(encoded(TunnelMsgOwned::Busy))]);
+        let mut input = Cursor::new("list\nexit\n");
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+
+        let exit_code = drive_serial_shell_loop(&mut serial, &mut input, &mut stdout, &mut stderr)
+            .expect("serial shell failed");
+
+        assert_eq!(exit_code, 1);
+        assert!(String::from_utf8_lossy(&stderr).contains("remote busy"));
+        assert_eq!(
+            serial.writes(),
+            &[
+                "INIT".to_string(),
+                encoded(TunnelMsgOwned::CmdRequest { cmd: "list".into() })
+            ]
+        );
+    }
+}

@@ -516,4 +516,16 @@ mod tests {
             thread::sleep(Duration::from_millis(10));
         }
     }
+
+    #[test]
+    fn split_command_line_handles_quotes() {
+        let args = split_command_line("echo 'hello world'").unwrap();
+        assert_eq!(args, vec!["echo", "hello world"]);
+    }
+
+    #[test]
+    fn split_command_line_detects_unterminated_quote() {
+        let err = split_command_line("echo 'foo").unwrap_err();
+        assert!(err.contains("unterminated"));
+    }
 }

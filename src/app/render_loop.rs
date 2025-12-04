@@ -1,8 +1,11 @@
+use std::fs::{self, OpenOptions};
+use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
 use std::{
+    io::Write,
     thread,
     time::{Duration, Instant},
 };
@@ -12,6 +15,7 @@ use super::events::{CommandBridge, CommandExecutor, ScrollOffsets};
 use super::input::Button;
 use super::lifecycle::{create_shutdown_flag, render_shutdown};
 use super::negotiation::NegotiationLog;
+use super::polling::{start_polling, PollEvent, PollSnapshot, PollingHandle};
 use super::tunnel::TunnelController;
 use super::{AppConfig, LogLevel, Logger};
 use crate::{
@@ -31,12 +35,94 @@ use crate::{
         telemetry::{log_backoff_event, BackoffPhase},
         SerialFailureKind, SerialPort,
     },
-    Error, Result,
+    Error, Result, CACHE_DIR,
 };
 use crc32fast::Hasher;
 
 const HEARTBEAT_GRACE_MS: u64 = 5_000;
 const HEARTBEAT_BLINK_MS: u64 = 1_000;
+const POLLING_OVERLAY_MIN_INTERVAL_MS: u64 = 1_500;
+
+struct PollingState {
+    handle: PollingHandle,
+    latest: Option<PollSnapshot>,
+    latest_seq: u64,
+    last_rendered_seq: u64,
+    last_overlay_at: Instant,
+    log: PollingLog,
+}
+
+impl PollingState {
+    fn new(handle: PollingHandle) -> Self {
+        Self {
+            handle,
+            latest: None,
+            latest_seq: 0,
+            last_rendered_seq: 0,
+            last_overlay_at: Instant::now(),
+            log: PollingLog::new(),
+        }
+    }
+
+    fn record_snapshot(&mut self, snapshot: PollSnapshot, logger: &Logger) {
+        self.latest_seq = self.latest_seq.wrapping_add(1);
+        if let Err(err) = self.log.snapshot(self.latest_seq, &snapshot) {
+            logger.debug(format!("polling log append failed: {err}"));
+        }
+        self.latest = Some(snapshot);
+    }
+
+    fn record_error(&self, err: &str, logger: &Logger) {
+        if let Err(write_err) = self.log.error(err) {
+            logger.debug(format!("polling log error append failed: {write_err}"));
+        }
+    }
+}
+
+struct PollingLog {
+    path: PathBuf,
+}
+
+impl PollingLog {
+    fn new() -> Self {
+        let path = PathBuf::from(CACHE_DIR).join("polling").join("events.log");
+        Self { path }
+    }
+
+    fn snapshot(&self, seq: u64, snapshot: &PollSnapshot) -> std::io::Result<()> {
+        let mut line = format!(
+            "seq={seq} cpu={:.1} mem_used_kb={} mem_total_kb={} disk_used_pct={:.1}",
+            snapshot.cpu_percent,
+            snapshot.mem_used_kb,
+            snapshot.mem_total_kb,
+            snapshot.disk_used_pct
+        );
+        if let Some(available) = snapshot.disk_available_kb {
+            line.push_str(&format!(" disk_available_kb={available}"));
+        }
+        if let Some(temp) = snapshot.temperature_c {
+            line.push_str(&format!(" temp_c={temp:.1}"));
+        }
+        line.push_str(" kind=snapshot");
+        self.append_line(&line)
+    }
+
+    fn error(&self, err: &str) -> std::io::Result<()> {
+        let line = format!("kind=error message={err}");
+        self.append_line(&line)
+    }
+
+    fn append_line(&self, line: &str) -> std::io::Result<()> {
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)?;
+        writeln!(file, "{line}")
+    }
+}
 
 #[derive(Default)]
 struct LoopStats {
@@ -113,8 +199,30 @@ pub(super) fn run_render_loop(
     }
 
     let running: Arc<AtomicBool> = create_shutdown_flag()?;
+    let mut polling = if config.polling_enabled {
+        Some(PollingState::new(start_polling(
+            config.poll_interval_ms,
+            running.clone(),
+        )))
+    } else {
+        None
+    };
 
     while running.load(Ordering::SeqCst) {
+        if let Some(polling_state) = polling.as_mut() {
+            while let Ok(event) = polling_state.handle.receiver().try_recv() {
+                match event {
+                    PollEvent::Snapshot(snapshot) => {
+                        polling_state.record_snapshot(snapshot, logger);
+                    }
+                    PollEvent::Error(err) => {
+                        logger.warn(format!("polling error: {err}"));
+                        polling_state.record_error(&err, logger);
+                    }
+                }
+            }
+        }
+
         // Track heartbeat visibility when frames stop arriving for a grace period.
         let current_time = Instant::now();
         if let Some(serial_ref) = serial_connection.as_mut() {
@@ -493,6 +601,18 @@ pub(super) fn run_render_loop(
                 lcd.set_backlight(backlight_state)?;
             }
         }
+
+        let no_frames_available = state.is_empty();
+        if let Some(polling_state) = polling.as_mut() {
+            maybe_render_polling_overlay(
+                polling_state,
+                lcd,
+                config.cols,
+                serial_connection.is_some(),
+                current_frame.is_some(),
+                no_frames_available,
+            )?;
+        }
     }
 
     // Leave the display in a clean shutdown state.
@@ -557,4 +677,100 @@ fn send_command_frame(serial: &mut SerialPort, msg: CommandMessage, logger: &Log
             logger.warn(format!("command encode failed: {err}"));
         }
     }
+}
+
+fn maybe_render_polling_overlay(
+    polling: &mut PollingState,
+    lcd: &mut Lcd,
+    cols: u8,
+    serial_active: bool,
+    has_frame: bool,
+    no_frames_available: bool,
+) -> Result<()> {
+    if polling.latest.is_none() {
+        return Ok(());
+    }
+    let should_render = if serial_active {
+        no_frames_available && !has_frame
+    } else {
+        true
+    };
+    if !should_render {
+        return Ok(());
+    }
+    let now = Instant::now();
+    let overlay_interval = Duration::from_millis(POLLING_OVERLAY_MIN_INTERVAL_MS);
+    if polling.last_rendered_seq == polling.latest_seq
+        && now.duration_since(polling.last_overlay_at) < overlay_interval
+    {
+        return Ok(());
+    }
+    let snapshot = polling.latest.as_ref().unwrap();
+    render_polling_overlay(lcd, cols, snapshot, serial_active)?;
+    polling.last_rendered_seq = polling.latest_seq;
+    polling.last_overlay_at = now;
+    Ok(())
+}
+
+fn render_polling_overlay(
+    lcd: &mut Lcd,
+    cols: u8,
+    snapshot: &PollSnapshot,
+    serial_active: bool,
+) -> Result<()> {
+    let width = cols as usize;
+    let (line1, line2) = format_polling_lines(snapshot, width, serial_active);
+    lcd.clear()?;
+    lcd.set_backlight(true)?;
+    lcd.set_blink(false)?;
+    lcd.write_line(0, &line1)?;
+    lcd.write_line(1, &line2)?;
+    Ok(())
+}
+
+fn format_polling_lines(
+    snapshot: &PollSnapshot,
+    width: usize,
+    serial_active: bool,
+) -> (String, String) {
+    let cpu = snapshot.cpu_percent.round() as i32;
+    let mem_pct = if snapshot.mem_total_kb > 0 {
+        ((snapshot.mem_used_kb as f64 / snapshot.mem_total_kb as f64) * 100.0).round() as i32
+    } else {
+        0
+    };
+    let disk = snapshot.disk_used_pct.round() as i32;
+    let free_mb = snapshot
+        .disk_available_kb
+        .map(|kb| (kb / 1024) as u64)
+        .map(|mb| format!("{mb}M"))
+        .unwrap_or_else(|| "--".into());
+    let temp = snapshot
+        .temperature_c
+        .map(|c| format!("{:.0}C", c))
+        .unwrap_or_else(|| "--".into());
+    let prefix = if serial_active { "" } else { "RC " };
+    let line1 = fit_line(format!("{prefix}CPU{cpu:>3}% MEM{mem_pct:>3}%"), width);
+    let line2 = fit_line(
+        format!("DSK{disk:>3}% TMP{temp:>4} FREE{free_mb:>4}"),
+        width,
+    );
+    (line1, line2)
+}
+
+fn fit_line(text: String, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    let mut chars: Vec<char> = text.chars().collect();
+    if chars.len() > width {
+        chars.truncate(width);
+        return chars.into_iter().collect();
+    }
+    if chars.len() < width {
+        let mut padded = text;
+        padded.push_str(&" ".repeat(width - chars.len()));
+        return padded;
+    }
+    text
 }

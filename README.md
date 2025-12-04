@@ -167,6 +167,27 @@ Examples:
 
 ---
 
+## Hardware polling overlay (P11)
+
+The daemon now ships with an optional hardware polling agent that samples the
+local CPU, memory, disk, and temperature every few seconds without breaking the
+5 MB RSS ceiling. Enable it via `polling_enabled = true` in
+`~/.serial_lcd/config.toml` or pass `--polling` on the CLI (use `--no-polling`
+to override the config), and adjust `poll_interval_ms` / `--poll-interval-ms`
+to any value between 1000 ms and 60 000 ms (default 5000 ms).
+
+When polling is enabled the LCD automatically shows a live system snapshot while
+the serial link is offline or before the first JSON frame arrives, so techs can
+see host vitals even if the upstream sender is quiet. Line 1 highlights
+`CPU`/`MEM` percentages (prefixed with `RC` when reconnecting) and line 2 shows
+disk usage, the most recent temperature probe, and available disk space in MB.
+
+Each snapshot (and any poller error) is appended to
+`/run/serial_lcd_cache/polling/events.log` for later inspection; the log lives
+entirely inside the RAM disk, so nothing persistent ever touches the rootfs.
+
+---
+
 ## Sending the JSON (TODO — Sister Program Coming)
 
 Soon there will be a small companion tool that:
@@ -264,6 +285,9 @@ Reload config without restarting the daemon:
 | `--pcf8574-addr <auto\|0xNN>` | I²C address for the PCF8574 backpack or `auto` to probe the common range. | `auto` (tries `0x27`, `0x26`, … ). |
 | `--log-level <error\|warn\|info\|debug\|trace>` | Verbosity for stderr/file logs. | `info` (also configurable via `LIFELINETTY_LOG_LEVEL`). |
 | `--log-file <path>` | Append logs to a file inside `/run/serial_lcd_cache` (also honors `LIFELINETTY_LOG_PATH`). | No file logging unless you provide a cache-rooted path. |
+| `--polling` | Force-enable the hardware polling overlay even if the config disables it. | Defaults to the config value (`polling_enabled`). |
+| `--no-polling` | Disable polling even when the config enables it. | Handy for smoke tests if you want to suppress the overlay/logging. |
+| `--poll-interval-ms <number>` | Interval between poll snapshots. | `5000` ms (must stay within 1000–60000 ms). |
 | `--demo` | Run built-in demo pages to validate wiring—no serial input required. | Disabled by default. |
 | `--serialsh` | Launch the optional serial shell that sends commands through the tunnel and streams remote stdout/stderr plus exit codes. | Disabled by default so daemons keep running headless unless you explicitly opt into the interactive session. |
 | `--wizard` | Run the guided first-run wizard even if a config already exists. | Automatically runs when `~/.serial_lcd/config.toml` is missing; also forceable via `LIFELINETTY_FORCE_WIZARD=1`. |

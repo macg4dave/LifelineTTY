@@ -313,7 +313,30 @@ mod tests {
         assert_eq!(merged.backoff_initial_ms, cfg_file.backoff_initial_ms);
         assert_eq!(merged.backoff_max_ms, cfg_file.backoff_max_ms);
         assert_eq!(merged.pcf8574_addr, cfg_file.pcf8574_addr);
+        assert_eq!(merged.polling_enabled, cfg_file.polling_enabled);
+        assert_eq!(merged.poll_interval_ms, cfg_file.poll_interval_ms);
         let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn cli_overrides_polling_settings() {
+        let mut cfg_file = Config::default();
+        cfg_file.polling_enabled = false;
+        cfg_file.poll_interval_ms = crate::config::DEFAULT_POLL_INTERVAL_MS;
+
+        let mut opts = RunOptions::default();
+        opts.polling_enabled = Some(true);
+        opts.poll_interval_ms = Some(2_500);
+
+        let merged = AppConfig::from_sources(cfg_file.clone(), opts.clone());
+        assert!(merged.polling_enabled);
+        assert_eq!(merged.poll_interval_ms, 2_500);
+
+        opts.polling_enabled = None;
+        opts.poll_interval_ms = None;
+        let merged_default = AppConfig::from_sources(cfg_file.clone(), opts);
+        assert_eq!(merged_default.polling_enabled, cfg_file.polling_enabled);
+        assert_eq!(merged_default.poll_interval_ms, cfg_file.poll_interval_ms);
     }
 
     #[test]

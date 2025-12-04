@@ -3,6 +3,7 @@ LCD Output Features (how the screen will look)
 - Dashboard mode (default):
   - Line 1: status summary, e.g., “Up 12:34  CPU 42%”
   - Line 2: bar graph for a key metric (CPU/RAM/disk) using custom block chars (0–5/6 levels).
+  - When hardware polling is enabled the same layout is reused for the live host snapshot overlay (prefix `RC` indicates the serial link is reconnecting).
 
 - Bar graphs:
   - Auto-computed from `bar_value` + optional `bar_max` (default 100). Example: “NET 650/1000” renders a ~65% bar.

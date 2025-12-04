@@ -6,7 +6,7 @@ use std::{
 use crc32fast::Hasher;
 
 use crate::{
-    payload::{Defaults, RenderFrame, DEFAULT_PAGE_TIMEOUT_MS, DEFAULT_SCROLL_MS},
+    payload::{normalize_payload_json, Defaults, RenderFrame, DEFAULT_PAGE_TIMEOUT_MS, DEFAULT_SCROLL_MS},
     Error, Result,
 };
 
@@ -40,17 +40,19 @@ impl RenderState {
     /// Ingest a JSON frame string. Returns Some(frame) if it is new, None if duplicate.
     pub fn ingest(&mut self, raw: &str) -> Result<Option<RenderFrame>> {
         self.prune_expired(Instant::now());
-        if raw.len() > MAX_FRAME_BYTES {
+        let normalized = normalize_payload_json(raw)?;
+        let canonical = normalized.as_ref();
+        if canonical.len() > MAX_FRAME_BYTES {
             return Err(Error::Parse(format!(
                 "frame exceeds {MAX_FRAME_BYTES} bytes"
             )));
         }
 
-        let crc = checksum_raw(raw);
+        let crc = checksum_raw(canonical);
         if self.last_crc == Some(crc) {
             return Ok(None);
         }
-        let frame = RenderFrame::from_payload_json_with_defaults(raw, self.defaults)?;
+        let frame = RenderFrame::from_normalized_payload_with_defaults(canonical, self.defaults)?;
         let expires_at = frame
             .duration_ms
             .map(|ms| Instant::now() + Duration::from_millis(ms));
@@ -117,6 +119,9 @@ fn checksum_raw(raw: &str) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compression::{compress, CompressionCodec};
+    use serde::Serialize;
+    use serde_bytes::ByteBuf;
 
     #[test]
     fn dedupes_identical_frames() {
@@ -168,5 +173,35 @@ mod tests {
             state.next_page().is_none(),
             "expired frame should be dropped"
         );
+    }
+
+    #[derive(Serialize)]
+    struct TestEnvelope {
+        #[serde(rename = "type")]
+        kind: &'static str,
+        schema_version: u8,
+        codec: &'static str,
+        original_len: u32,
+        #[serde(with = "serde_bytes")]
+        data: ByteBuf,
+    }
+
+    #[test]
+    fn compressed_payload_dedupes_with_plain() {
+        let mut state = RenderState::new(None);
+        let raw = r#"{"schema_version":1,"line1":"COMP","line2":"TEST"}"#;
+        let compressed = compress(raw.as_bytes(), CompressionCodec::Lz4).unwrap();
+        let envelope = TestEnvelope {
+            kind: "compressed",
+            schema_version: 1,
+            codec: "lz4",
+            original_len: raw.len() as u32,
+            data: ByteBuf::from(compressed),
+        };
+        let wrapped = serde_json::to_string(&envelope).unwrap();
+
+        assert!(state.ingest(raw).unwrap().is_some());
+        // Same frame arrives again but wrapped in compression envelope; dedupe should trigger.
+        assert!(state.ingest(&wrapped).unwrap().is_none());
     }
 }

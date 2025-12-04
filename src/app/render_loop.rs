@@ -42,6 +42,7 @@ use crc32fast::Hasher;
 const HEARTBEAT_GRACE_MS: u64 = 5_000;
 const HEARTBEAT_BLINK_MS: u64 = 1_000;
 const POLLING_OVERLAY_MIN_INTERVAL_MS: u64 = 1_500;
+const PROTOCOL_ERROR_LOG_MAX_BYTES: u64 = 256 * 1024;
 
 struct PollingState {
     handle: PollingHandle,
@@ -124,6 +125,44 @@ impl PollingLog {
     }
 }
 
+struct ProtocolErrorLog {
+    path: PathBuf,
+}
+
+impl ProtocolErrorLog {
+    fn new() -> Self {
+        let path = PathBuf::from(CACHE_DIR).join("protocol_errors.log");
+        Self { path }
+    }
+
+    fn log(&self, err: &Error, payload: &str, logger: &Logger) {
+        if let Err(write_err) = self.append(err, payload) {
+            logger.debug(format!("protocol error log write failed: {write_err}"));
+        }
+    }
+
+    fn append(&self, err: &Error, payload: &str) -> std::io::Result<()> {
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        if let Ok(meta) = fs::metadata(&self.path) {
+            if meta.len() >= PROTOCOL_ERROR_LOG_MAX_BYTES {
+                let _ = fs::remove_file(&self.path);
+            }
+        }
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)?;
+        writeln!(
+            file,
+            "error={} payload={}",
+            err,
+            payload.replace('\n', "\\n")
+        )
+    }
+}
+
 #[derive(Default)]
 struct LoopStats {
     frames_accepted: u64,
@@ -193,6 +232,7 @@ pub(super) fn run_render_loop(
     let mut tunnel = TunnelController::new(config.command_allowlist.clone())?;
     let mut command_bridge = CommandBridge::new();
     let mut command_executor = CommandExecutor::new(config.command_allowlist.clone());
+    let protocol_errors = ProtocolErrorLog::new();
 
     if reconnect_displayed {
         render_reconnecting(lcd, config.cols)?;
@@ -506,6 +546,9 @@ pub(super) fn run_render_loop(
                                     stats.frames_rejected += 1;
                                     if matches!(err, Error::ChecksumMismatch) {
                                         stats.checksum_failures += 1;
+                                    }
+                                    if matches!(err, Error::Parse(_)) {
+                                        protocol_errors.log(&err, line, logger);
                                     }
                                     logger.warn(format!("frame error: {err}"));
                                     render_parse_error(lcd, config.cols, &err)?;

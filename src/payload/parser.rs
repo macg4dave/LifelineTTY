@@ -1,8 +1,12 @@
-use crate::{Error, Result, CACHE_DIR};
+use crate::{
+    compression::{decompress, CompressionCodec},
+    config::DEFAULT_PROTOCOL_SCHEMA_VERSION,
+    Error, Result, CACHE_DIR,
+};
 use crc32fast::Hasher;
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
-use std::path::Path;
+use std::{borrow::Cow, path::Path};
 
 use super::icons::parse_icons;
 use super::{DisplayMode, Icon, DEFAULT_PAGE_TIMEOUT_MS, DEFAULT_SCROLL_MS};
@@ -174,6 +178,62 @@ fn validate_cache_path(path: &str) -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug, Deserialize)]
+struct FrameTypeProbe {
+    #[serde(rename = "type")]
+    kind: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CompressionEnvelopeOwned {
+    #[serde(rename = "type")]
+    frame_type: String,
+    schema_version: u8,
+    codec: String,
+    original_len: u32,
+    #[serde(with = "serde_bytes")]
+    data: ByteBuf,
+}
+
+pub fn normalize_payload_json<'a>(raw: &'a str) -> Result<Cow<'a, str>> {
+    let probe: FrameTypeProbe =
+        serde_json::from_str(raw).map_err(|e| Error::Parse(format!("json: {e}")))?;
+    if probe.kind.as_deref() != Some("compressed") {
+        return Ok(Cow::Borrowed(raw));
+    }
+
+    let envelope: CompressionEnvelopeOwned = serde_json::from_str(raw)
+        .map_err(|e| Error::Parse(format!("compressed envelope: {e}")))?;
+    if envelope.schema_version != DEFAULT_PROTOCOL_SCHEMA_VERSION {
+        return Err(Error::Parse(format!(
+            "unsupported compressed schema_version={} expected={DEFAULT_PROTOCOL_SCHEMA_VERSION}",
+            envelope.schema_version
+        )));
+    }
+    if envelope.frame_type.as_str() != "compressed" {
+        return Err(Error::Parse(format!(
+            "unsupported envelope type '{}'",
+            envelope.frame_type
+        )));
+    }
+
+    let codec = CompressionCodec::from_name(&envelope.codec).ok_or_else(|| {
+        Error::Parse(format!("unsupported compression codec '{}'", envelope.codec))
+    })?;
+    let decompressed = decompress(envelope.data.as_ref(), codec)?;
+    if decompressed.len() != envelope.original_len as usize {
+        return Err(Error::Parse(format!(
+            "compressed original_len={} but decoded={}",
+            envelope.original_len,
+            decompressed.len()
+        )));
+    }
+    let payload = String::from_utf8(decompressed)
+        .map_err(|_| Error::Parse("decompressed payload not utf-8".into()))?;
+    Ok(Cow::Owned(payload))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Defaults {
     pub scroll_speed_ms: u64,
@@ -259,6 +319,14 @@ impl RenderFrame {
     }
 
     pub fn from_payload_json_with_defaults(raw: &str, defaults: Defaults) -> Result<Self> {
+        let normalized = normalize_payload_json(raw)?;
+        Self::from_normalized_payload_with_defaults(&normalized, defaults)
+    }
+
+    pub fn from_normalized_payload_with_defaults(
+        raw: &str,
+        defaults: Defaults,
+    ) -> Result<Self> {
         let payload: Payload =
             serde_json::from_str(raw).map_err(|e| Error::Parse(format!("json: {e}")))?;
 
@@ -410,6 +478,8 @@ fn compute_bar_percent(payload: &Payload) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compression::{compress, CompressionCodec};
+    use serde::Serialize;
     use serde_bytes::ByteBuf;
 
     fn parse(raw: &str) -> RenderFrame {
@@ -781,5 +851,53 @@ mod tests {
         };
         let err = encode_command_frame(&msg).unwrap_err();
         assert!(format!("{err}").contains("chunk exceeds"));
+    }
+
+    #[derive(Serialize)]
+    struct TestEnvelope {
+        #[serde(rename = "type")]
+        kind: &'static str,
+        schema_version: u8,
+        codec: &'static str,
+        original_len: u32,
+        #[serde(with = "serde_bytes")]
+        data: ByteBuf,
+    }
+
+    #[test]
+    fn compressed_envelope_round_trips() {
+        let payload = r#"{"schema_version":1,"line1":"HELLO","line2":"WORLD"}"#;
+        let compressed = compress(payload.as_bytes(), CompressionCodec::Lz4).unwrap();
+        let envelope = TestEnvelope {
+            kind: "compressed",
+            schema_version: 1,
+            codec: "lz4",
+            original_len: payload.len() as u32,
+            data: ByteBuf::from(compressed),
+        };
+        let raw = serde_json::to_string(&envelope).unwrap();
+        let frame = RenderFrame::from_payload_json(&raw).unwrap();
+        assert_eq!(frame.line1, "HELLO");
+        assert_eq!(frame.line2, "WORLD");
+    }
+
+    #[test]
+    fn compressed_envelope_rejects_unknown_codec() {
+        let payload = r#"{"schema_version":1,"line1":"HELLO","line2":"WORLD"}"#;
+        let compressed = compress(payload.as_bytes(), CompressionCodec::Lz4).unwrap();
+        let envelope = TestEnvelope {
+            kind: "compressed",
+            schema_version: 1,
+            codec: "lz4",
+            original_len: payload.len() as u32,
+            data: ByteBuf::from(compressed),
+        };
+        let mut value: serde_json::Value = serde_json::to_value(&envelope).unwrap();
+        if let serde_json::Value::Object(ref mut map) = value {
+            map.insert("codec".into(), serde_json::Value::String("snappy".into()));
+        }
+        let raw = serde_json::to_string(&value).unwrap();
+        let err = RenderFrame::from_payload_json(&raw).unwrap_err();
+        assert!(format!("{err}").contains("unsupported compression codec"));
     }
 }

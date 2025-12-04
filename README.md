@@ -163,6 +163,32 @@ Examples:
 {"schema_version":1,"line1":"Lights out","line2":"","backlight":false}
 ```
 
+### Compression envelopes (Milestone F / P14)
+
+When `--compressed` (or `[protocol].compression.enabled = true`) is enabled, upstream senders can
+wrap each payload in a tiny envelope so the UART only ships compressed bytes:
+
+```json
+{
+  "type":"compressed",
+  "schema_version":1,
+  "codec":"lz4",
+  "original_len":64,
+  "data":"BASE64-LZ4-BYTES"
+}
+```
+
+- `schema_version` tracks the envelope itself (must match the daemon’s configured value).
+- `codec` must be one of `lz4`, `zstd`, or `none`.
+- `original_len` protects against truncated base64 blobs; mismatches are rejected.
+- `data` is base64-encoded LZ4/Zstd bytes; `serde_bytes` handles the encoding automatically if
+	you serialize a `Vec<u8>`/`ByteBuf`.
+
+The render loop now normalizes envelopes before deduplication, so the same logical payload counts
+as a duplicate whether it was sent compressed or plain-text. Malformed envelopes never crash the
+daemon—instead they are logged to `/run/serial_lcd_cache/protocol_errors.log` (auto-rotated at
+256 KB) and the LCD shows the usual parse error overlay.
+
 **Everything** the display can do is driven by JSON.
 
 ---
@@ -230,7 +256,17 @@ display_driver = "auto"
 button_gpio_pin = null
 backoff_initial_ms = 500
 backoff_max_ms = 10000
+
+[protocol]
+schema_version = 1
+compression = { enabled = false, codec = "lz4" }
 ```
+
+The `[protocol]` section locks the schema version (currently `1`) and lets you request
+compression by default. Set `compression.enabled = true` when both peers have negotiated the
+same codec via CLI/config (`lz4` today, `zstd` when enabled). The daemon still accepts plain
+JSON frames even when compression is disabled, but the flag ensures upstream senders only ship
+compressed envelopes when you opt in.
 
 Use `display_driver = "auto"` (default) to stick with the in-tree PCF8574 driver until the
 hd44780-driver rollout finishes. Set it to `"hd44780-driver"` to force the external crate on
@@ -255,6 +291,7 @@ Reload config without restarting the daemon:
 - Everything else (logs, payload caches, telemetry snapshots, LCD caches) belongs in the RAM disk mounted at `/run/serial_lcd_cache`. The provided systemd unit already restricts writes to that directory.
 - The `--log-file` flag and `LIFELINETTY_LOG_PATH` environment variable only accept paths inside `/run/serial_lcd_cache`. Provide an absolute cache path or a relative name (e.g., `logs/runtime.log`) and the daemon will place it under the cache root.
 - Reconnect telemetry is automatically appended to `/run/serial_lcd_cache/serial_backoff.log` as newline-delimited JSON (phase, device, baud, attempt counts).
+- Parser/compression failures land in `/run/serial_lcd_cache/protocol_errors.log`, which auto-rotates at 256 KB so repeated envelope mistakes never fill the RAM disk.
 - `/run/serial_lcd_cache` is wiped on reboot—treat it as ephemeral scratch space.
 
 ### Config validation rules
@@ -288,6 +325,9 @@ Reload config without restarting the daemon:
 | `--polling` | Force-enable the hardware polling overlay even if the config disables it. | Defaults to the config value (`polling_enabled`). |
 | `--no-polling` | Disable polling even when the config enables it. | Handy for smoke tests if you want to suppress the overlay/logging. |
 | `--poll-interval-ms <number>` | Interval between poll snapshots. | `5000` ms (must stay within 1000–60000 ms). |
+| `--compressed` | Request compressed payloads when the peer also advertises the capability. | Defaults to `[protocol].compression.enabled` (false). |
+| `--no-compressed` | Force plaintext payloads even if config/negotiation enabled compression. | Use when diagnosing envelope issues or talking to legacy peers. |
+| `--codec <lz4\|zstd>` | Choose the codec when compression is active. | `lz4` |
 | `--demo` | Run built-in demo pages to validate wiring—no serial input required. | Disabled by default. |
 | `--serialsh` | Launch the optional serial shell that sends commands through the tunnel and streams remote stdout/stderr plus exit codes. | Disabled by default so daemons keep running headless unless you explicitly opt into the interactive session. |
 | `--wizard` | Run the guided first-run wizard even if a config already exists. | Automatically runs when `~/.serial_lcd/config.toml` is missing; also forceable via `LIFELINETTY_FORCE_WIZARD=1`. |

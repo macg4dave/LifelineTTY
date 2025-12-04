@@ -1,5 +1,6 @@
 use crate::{
     cli::{RunMode, RunOptions},
+    compression::CompressionCodec,
     config::Pcf8574Addr,
     config::{
         Config, DisplayDriver, NegotiationConfig, DEFAULT_BAUD, DEFAULT_COLS, DEFAULT_DEVICE,
@@ -64,6 +65,9 @@ pub struct AppConfig {
     pub demo: bool,
     pub command_allowlist: Vec<String>,
     pub serialsh: bool,
+    pub protocol_schema_version: u8,
+    pub compression_enabled: bool,
+    pub compression_codec: CompressionCodec,
 }
 
 impl Default for AppConfig {
@@ -94,6 +98,9 @@ impl Default for AppConfig {
             demo: false,
             command_allowlist: Vec::new(),
             serialsh: false,
+            protocol_schema_version: crate::config::DEFAULT_PROTOCOL_SCHEMA_VERSION,
+            compression_enabled: crate::config::DEFAULT_PROTOCOL_COMPRESSION_ENABLED,
+            compression_codec: crate::config::DEFAULT_PROTOCOL_COMPRESSION_CODEC,
         }
     }
 }
@@ -220,6 +227,13 @@ impl AppConfig {
             demo: opts.demo,
             command_allowlist: config.command_allowlist.clone(),
             serialsh: matches!(opts.mode, RunMode::SerialShell),
+            protocol_schema_version: config.protocol.schema_version,
+            compression_enabled: opts
+                .compression_enabled
+                .unwrap_or(config.protocol.compression_enabled),
+            compression_codec: opts
+                .compression_codec
+                .unwrap_or(config.protocol.compression_codec),
         }
     }
 
@@ -303,6 +317,7 @@ mod tests {
             pcf8574_addr: crate::config::DEFAULT_PCF8574_ADDR,
             display_driver: crate::config::DEFAULT_DISPLAY_DRIVER,
             command_allowlist: Vec::new(),
+            protocol: crate::config::ProtocolConfig::default(),
         };
         let opts = RunOptions::default();
         let merged = AppConfig::from_sources(cfg_file.clone(), opts);

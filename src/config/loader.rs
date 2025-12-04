@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{Error, Result};
+use crate::{compression::CompressionCodec, Error, Result};
 
 use super::{Config, CONFIG_DIR_NAME, CONFIG_FILE_NAME};
 
@@ -65,6 +65,9 @@ pcf8574_addr = {}\n\
 display_driver = {}\n\
 backoff_initial_ms = {}\n\
 backoff_max_ms = {}\n\
+[protocol]\n\
+schema_version = {}\n\
+compression = {{ enabled = {}, codec = \"{}\" }}\n\
 [negotiation]\n\
 node_id = {}\n\
 preference = \"{}\"\n\
@@ -90,6 +93,9 @@ timeout_ms = {}\n",
         super::format_display_driver(&config.display_driver),
         config.backoff_initial_ms,
         config.backoff_max_ms,
+        config.protocol.schema_version,
+        config.protocol.compression_enabled,
+        config.protocol.compression_codec.as_str(),
         config.negotiation.node_id,
         config.negotiation.preference,
         config.negotiation.timeout_ms,
@@ -248,6 +254,41 @@ pub fn parse(raw: &str) -> Result<Config> {
                     ))
                 })?;
             }
+            "protocol.schema_version" => {
+                cfg.protocol.schema_version = value.parse().map_err(|_| {
+                    Error::InvalidArgs(format!(
+                        "invalid protocol.schema_version on line {}",
+                        idx + 1
+                    ))
+                })?;
+            }
+            "protocol.compression_enabled" => {
+                cfg.protocol.compression_enabled = value.parse().map_err(|_| {
+                    Error::InvalidArgs(format!(
+                        "invalid protocol.compression_enabled on line {}",
+                        idx + 1
+                    ))
+                })?;
+            }
+            "protocol.compression_codec" => {
+                cfg.protocol.compression_codec = CompressionCodec::from_name(value)
+                    .ok_or_else(|| {
+                        Error::InvalidArgs(format!(
+                            "invalid protocol.compression_codec on line {}",
+                            idx + 1
+                        ))
+                    })?;
+            }
+            "protocol.compression" => {
+                let (enabled, codec) = parse_protocol_compression_table(value).map_err(|e| {
+                    Error::InvalidArgs(format!(
+                        "invalid protocol.compression on line {}: {e}",
+                        idx + 1
+                    ))
+                })?;
+                cfg.protocol.compression_enabled = enabled;
+                cfg.protocol.compression_codec = codec;
+            }
             other => {
                 return Err(Error::InvalidArgs(format!(
                     "unknown config key '{}' on line {}",
@@ -323,6 +364,45 @@ fn format_string_array(values: &[String]) -> String {
     format!("[{quoted}]")
 }
 
+fn parse_protocol_compression_table(
+    value: &str,
+) -> std::result::Result<(bool, CompressionCodec), String> {
+    let trimmed = value.trim();
+    if !trimmed.starts_with('{') || !trimmed.ends_with('}') {
+        return Err("expected inline table literal (e.g., { enabled = false, codec = \"lz4\" })".into());
+    }
+    let inner = &trimmed[1..trimmed.len() - 1];
+    let mut enabled: Option<bool> = None;
+    let mut codec: Option<CompressionCodec> = None;
+    for part in inner.split(',') {
+        let entry = part.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        let (key, val) = entry
+            .split_once('=')
+            .ok_or_else(|| format!("invalid entry '{entry}'"))?;
+        let key = key.trim();
+        let val = val.trim().trim_matches('"');
+        match key {
+            "enabled" => {
+                enabled = Some(val.parse().map_err(|_| "enabled must be true or false")?);
+            }
+            "codec" => {
+                codec = Some(
+                    CompressionCodec::from_name(val)
+                        .ok_or_else(|| format!("unsupported codec '{val}'"))?,
+                );
+            }
+            other => return Err(format!("unknown key '{other}'")),
+        }
+    }
+    Ok((
+        enabled.ok_or_else(|| "compression.enabled missing".to_string())?,
+        codec.ok_or_else(|| "compression.codec missing".to_string())?,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -381,6 +461,9 @@ mod tests {
             display_driver = "in-tree"
             backoff_initial_ms = 750
             backoff_max_ms = 9000
+            [protocol]
+            schema_version = 1
+            compression = { enabled = true, codec = "zstd" }
         "#;
         fs::write(&path, contents).unwrap();
         let cfg = load_from_path(&path).unwrap();
@@ -402,6 +485,9 @@ mod tests {
         assert_eq!(cfg.display_driver, DisplayDriver::InTree);
         assert_eq!(cfg.backoff_initial_ms, 750);
         assert_eq!(cfg.backoff_max_ms, 9000);
+        assert_eq!(cfg.protocol.schema_version, 1);
+        assert!(cfg.protocol.compression_enabled);
+        assert_eq!(cfg.protocol.compression_codec, CompressionCodec::Zstd);
         let _ = fs::remove_file(path);
     }
 
@@ -456,6 +542,11 @@ mod tests {
             backoff_max_ms: DEFAULT_BACKOFF_MAX_MS,
             negotiation: crate::config::NegotiationConfig::default(),
             command_allowlist: Vec::new(),
+            protocol: crate::config::ProtocolConfig {
+                schema_version: 1,
+                compression_enabled: true,
+                compression_codec: CompressionCodec::Lz4,
+            },
         };
         save_to_path(&cfg, &path).unwrap();
         let loaded = load_from_path(&path).unwrap();

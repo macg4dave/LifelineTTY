@@ -1,4 +1,5 @@
 use crate::{
+    compression::CompressionCodec,
     negotiation::RolePreference,
     serial::{DtrBehavior, FlowControlMode, ParityMode, StopBitsMode},
     Error, Result,
@@ -37,8 +38,28 @@ pub const DEFAULT_NEGOTIATION_TIMEOUT_MS: u64 = 1_000;
 pub const MIN_NEGOTIATION_TIMEOUT_MS: u64 = 250;
 pub const MAX_NEGOTIATION_TIMEOUT_MS: u64 = 5_000;
 pub const NEGOTIATION_SECTION_NAME: &str = "negotiation";
+pub const DEFAULT_PROTOCOL_SCHEMA_VERSION: u8 = 1;
+pub const DEFAULT_PROTOCOL_COMPRESSION_ENABLED: bool = false;
+pub const DEFAULT_PROTOCOL_COMPRESSION_CODEC: CompressionCodec = CompressionCodec::Lz4;
 const CONFIG_DIR_NAME: &str = ".serial_lcd";
 const CONFIG_FILE_NAME: &str = "config.toml";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProtocolConfig {
+    pub schema_version: u8,
+    pub compression_enabled: bool,
+    pub compression_codec: CompressionCodec,
+}
+
+impl Default for ProtocolConfig {
+    fn default() -> Self {
+        Self {
+            schema_version: DEFAULT_PROTOCOL_SCHEMA_VERSION,
+            compression_enabled: DEFAULT_PROTOCOL_COMPRESSION_ENABLED,
+            compression_codec: DEFAULT_PROTOCOL_COMPRESSION_CODEC,
+        }
+    }
+}
 
 /// Settings that control how this node participates in auto-negotiation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,6 +154,7 @@ pub struct Config {
     pub backoff_max_ms: u64,
     pub negotiation: NegotiationConfig,
     pub command_allowlist: Vec<String>,
+    pub protocol: ProtocolConfig,
 }
 
 impl Default for Config {
@@ -158,6 +180,7 @@ impl Default for Config {
             backoff_max_ms: DEFAULT_BACKOFF_MAX_MS,
             negotiation: NegotiationConfig::default(),
             command_allowlist: Vec::new(),
+            protocol: ProtocolConfig::default(),
         }
     }
 }
@@ -229,6 +252,12 @@ pub(crate) fn validate(cfg: &Config) -> Result<()> {
                 "command_allowlist entries must be non-empty".to_string(),
             ));
         }
+    }
+    if cfg.protocol.schema_version != DEFAULT_PROTOCOL_SCHEMA_VERSION {
+        return Err(Error::InvalidArgs(format!(
+            "protocol.schema_version must be {}",
+            DEFAULT_PROTOCOL_SCHEMA_VERSION
+        )));
     }
     if cfg.serial_timeout_ms < MIN_SERIAL_TIMEOUT_MS
         || cfg.serial_timeout_ms > MAX_SERIAL_TIMEOUT_MS
@@ -369,6 +398,7 @@ mod tests {
             backoff_max_ms: DEFAULT_BACKOFF_MAX_MS,
             negotiation: NegotiationConfig::default(),
             command_allowlist: Vec::new(),
+            protocol: ProtocolConfig::default(),
         };
         cfg.save_to_path(&path).unwrap();
         let loaded = Config::load_from_path(&path).unwrap();

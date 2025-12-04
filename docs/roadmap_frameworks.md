@@ -10,6 +10,7 @@ New app modules
 - `src/app/negotiation.rs` — Negotiator, Role and Capabilities for handshake (Milestone B / P9)
 - `src/app/telemetry.rs` — Telemetry helper to append small logs into CACHE_DIR (P5)
 - `src/app/connection.rs` — Reconnection flow and negotiation handshake driver (Milestone B / P9)
+- `src/app/wizard.rs` — Guided first-run wizard (Milestone I / P23) that auto-runs when the config is missing, mirrors prompts to the LCD, probes `/dev/tty*` devices + baud rates, and writes transcripts into `/run/serial_lcd_cache/wizard/`.
 - `src/negotiation.rs` — Shared capability/role definitions consumed by both the connection logic and the config loader.
 
 New config module

@@ -44,6 +44,7 @@ pub struct RunOptions {
     pub demo: bool,
     pub polling_enabled: Option<bool>,
     pub poll_interval_ms: Option<u64>,
+    pub wizard: bool,
 }
 
 /// Parsed command-line intent.
@@ -87,6 +88,10 @@ impl Command {
 
         help.push_str(
             "  --serialsh                   Enable the optional serial shell that runs commands over the tunnel and streams remote stdout/stderr + exit codes\n",
+        );
+
+        help.push_str(
+            "  --wizard                    Run the guided first-run setup wizard even if a config already exists\n",
         );
 
         help.push_str("  -h, --help        Show this help\n  -V, --version     Show version\n");
@@ -208,6 +213,9 @@ fn parse_run_options(iter: &mut std::slice::Iter<String>) -> Result<RunOptions> 
                 // Milestone G: run the CLI serial shell through the command tunnel.
                 opts.mode = RunMode::SerialShell;
             }
+            "--wizard" => {
+                opts.wizard = true;
+            }
             other => {
                 return Err(Error::InvalidArgs(format!(
                     "unknown flag '{other}', try --help"
@@ -303,6 +311,7 @@ mod tests {
             polling_enabled: None,
             poll_interval_ms: None,
             demo: true,
+            wizard: false,
         };
         let cmd = Command::parse(&args).unwrap();
         assert_eq!(cmd, Command::Run(expected));
@@ -338,6 +347,7 @@ mod tests {
             polling_enabled: None,
             poll_interval_ms: None,
             demo: false,
+            wizard: false,
         };
         let cmd = Command::parse(&args).unwrap();
         assert_eq!(cmd, Command::Run(expected));
@@ -413,6 +423,16 @@ mod tests {
         let cmd = Command::parse(&args).unwrap();
         match cmd {
             Command::Run(opts) => assert!(matches!(opts.mode, RunMode::SerialShell)),
+            other => panic!("expected Run variant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_wizard_flag_sets_force() {
+        let args = vec!["--wizard".into()];
+        let cmd = Command::parse(&args).unwrap();
+        match cmd {
+            Command::Run(opts) => assert!(opts.wizard),
             other => panic!("expected Run variant, got {other:?}"),
         }
     }

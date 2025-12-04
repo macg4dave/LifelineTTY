@@ -54,9 +54,9 @@ There is also a short frameworks document that describes the set of skeleton mod
 | **P20 (✅ 4 Dec 2025)** | **Serial transport resilience**: finalize explicit 8N1 + flow-control defaults in code, expose DTR/RTS toggles + timeout knobs via config for upcoming tunnels, and add structured error mapping/logs so reconnect logic can distinguish permission, unplug, and framing failures before Milestones A–C. _(Status: CLI + config cover flow-control/parity/stop-bits/DTR/timeouts, and telemetry now records categorized permission/unplug/framing causes for each reconnect.)_ |
 | **P21 (✅ 3 Dec 2025)** | **Adopt hd44780-driver crate for Linux builds where possible**: migrate the internal HD44780 driver to use the external `hd44780-driver` crate (via a small adapter for the platform I²C bus) while preserving our public API for any missing functionality. |
 | **P22** | **Custom character support and built in icons**: Add full HD44780 custom-character handling, including a built-in icon set and an API to load/swap glyph banks at runtime. _See Milestone H for execution details._ |
-| **P23** | **Guided first-run setup wizard**: Add an opt-out onboarding flow that interviews operators about desired role (server/client), enumerates TTY devices, probes safe baud rates while honoring the 9600-floor, and writes confirmed answers into `~/.serial_lcd/config.toml`. The wizard must auto-run only when no config exists, skip otherwise, and expose an explicit re-run toggle (CLI flag or env) plus docs/tests. |
+| **P23 (✅ 4 Dec 2025)** | **Guided first-run setup wizard**: Completed. `src/app/wizard.rs` now auto-runs whenever `~/.serial_lcd/config.toml` is missing, mirrors prompts on the LCD, validates `/dev/tty*` candidates + baud picks, persists the answers, and logs transcripts to `/run/serial_lcd_cache/wizard/summary.log`. Operators can re-run it via `lifelinetty --wizard` or `LIFELINETTY_FORCE_WIZARD=1`, and CI feeds scripted answers through `LIFELINETTY_WIZARD_SCRIPT`. |
 
-To keep the serial link predictable, the daemon now enforces a 9600-baud floor and always starts there automatically. A first-run wizard (Milestone I) will run automatically on fresh installs to help operators identify higher stable baud rates before upping the speed.
+To keep the serial link predictable, the daemon now enforces a 9600-baud floor and always starts there automatically. The new first-run wizard (Milestone I) runs automatically on fresh installs to help operators identify higher stable baud rates before upping the speed, and it records every session under `/run/serial_lcd_cache/wizard/` for auditing.
 
 ### Priority implementation plan
 
@@ -72,7 +72,7 @@ The remaining priorities can now be tackled in lockstep with the command-tunnel 
 | **P15 — Heartbeat + watchdog** | Plan: revisit Milestone D’s polling/telemetry timers to emit heartbeat frames for both the LCD render loop and the command tunnel, allowing CLI clients to detect stalls and trigger offline screens. Keep watchdog state machines purely in `src/app/watchdog.rs` to avoid extra threads. |
 | **P19 — Documentation + sample payload refresh** | Plan: refresh `README.md`, `samples/payload_examples*.json`, and `docs/lcd_patterns.md` with the tunnel payload formats, heartbeat guidance, and new icon banking rules once the schema/MLA work stabilizes. |
 | **P22 — Custom character support and built-in icons** | Plan: expand `src/payload/icons.rs` and `src/display/lcd.rs` to manage CGRAM banks, add icon scheduling tests, and document the behavior in `docs/icon_library.md`; tie the icon manager into the command tunnel so remote greet frames can request glyph swaps. |
-| **P23 — Guided first-run wizard** | Plan: hook `src/config/loader.rs` and `src/app/lifecycle.rs` so a missing `~/.serial_lcd/config.toml` triggers an LCD/serial onboarding flow that asks for role preference, TTY path, and baud targets, then persists answers. Provide a `--wizard` (or documented equivalent) re-run path, cache logs under `/run/serial_lcd_cache/wizard/`, and add smoke + integration tests that prove the wizard skips once a config exists. |
+| **P23 — Guided first-run wizard (✅ 4 Dec 2025)** | Completed: `src/app/wizard.rs` now runs before `Config::load_or_default()` whenever the config file is missing (daemon and `--serialsh` alike), guiding the operator through device/baud/LCD/role questions, persisting the answers, exposing `--wizard` + `LIFELINETTY_FORCE_WIZARD` for reruns, supporting scripted responses via `LIFELINETTY_WIZARD_SCRIPT`, and logging summaries inside `/run/serial_lcd_cache/wizard/`. |
 
 By keeping this plan visible in the roadmap, every contributor can spot the dependency graph: P8 feeds Milestone A, which in turn unlocks P9–P11 before the later payload and heartbeat work lands.
 
@@ -181,18 +181,13 @@ The previously cited plan items are now satisfied: the executor handles Busy/Exi
   4. Add tests + demos covering icon churn, slot eviction, and failure cases; refresh docs/samples so operators can opt in confidently.
 - **Crates & tooling**: no new crates; reuse `hd44780-driver`, `linux-embedded-hal`, `rppal`, `serde`, existing logging utilities. Detailed plan lives in `docs/milestone_h.md`.
 
-### Milestone I — Guided First-Run Wizard
+### Milestone I — Guided First-Run Wizard (completed 4 Dec 2025)
 
-- **Goal**: deliver an interactive first-boot experience that interviews operators about desired role (server or client), preferred TTY device, LCD geometry, and permissible baud rates, then writes the validated answers into `~/.serial_lcd/config.toml` while keeping the LCD online with helpful prompts.
-- **Scope**: `src/config/loader.rs` (fresh-install detection + persistence), `src/app/lifecycle.rs` (wizard dispatcher), `src/app/connection.rs` + serial helpers (TTY enumeration and baud probing), `docs/README.md`, `docs/roadmap_frameworks.md`, and `tests/bin_smoke.rs` for coverage.
-- **Dependencies**: P23, plus existing cache/config guardrails from B3, negotiation state machines from Milestone B, and serial telemetry improvements from P20.
-- **Constraints**: no network or new transport; wizard writes only to `~/.serial_lcd/config.toml` and `/run/serial_lcd_cache/wizard/`. It must honor the 9600-baud floor, skip automatically once a config exists, expose a documented CLI flag (e.g., `--wizard`) or env toggle to re-run intentionally, and keep RSS under 5 MB.
-- **Workflow**:
-  1. Detect missing configs via `ConfigLoader::ensure_default()` and branch into wizard mode before normal run/test routines start.
-  2. Enumerate candidate `/dev/tty*` devices, attempt safe read/write probes, and display findings on the LCD plus over serial logs so headless installs can respond.
-  3. Guide the user through role selection and baud testing, reusing negotiation helpers to preview capability impacts; persist selections alongside negotiation defaults and command allowlists.
-  4. Summarize the outcome, log it to `/run/serial_lcd_cache/wizard/summary.log`, and fall back to standard startup. Provide a `--wizard` code path (authorized by this milestone) plus integration tests proving the wizard skips when the config file already exists.
-- **Crates & tooling**: reuse `serialport`, `tokio-serial` (for async probes when enabled), `directories` for path handling, `serde`/`toml` for config writes, `humantime` for friendly prompt timers, and existing logger infrastructure for LCD + stderr output.
+- **Goal (shipped)**: deliver an interactive first-boot experience that interviews operators about desired role (server/client), preferred TTY device, LCD geometry, and permissible baud rates, then writes the validated answers into `~/.serial_lcd/config.toml` while keeping the LCD online with helpful prompts.
+- **Implementation**: `src/app/wizard.rs` owns the onboarding state machine, `App::from_options` and the serial shell invoke it before `Config::load_or_default()`, and the wizard mirrors each prompt on the LCD while probing safe `/dev/tty*` candidates at 9600 baud before accepting a higher target rate.
+- **Controls & automation**: `lifelinetty --wizard`, `LIFELINETTY_FORCE_WIZARD=1`, and `LIFELINETTY_WIZARD_SCRIPT=/path/to/answers.txt` cover reruns and CI scripting; headless boots auto-accept safe defaults if stdin is not a TTY so systemd launches never hang.
+- **Logging & storage**: every run appends a transcript (choices + baud probe results) to `/run/serial_lcd_cache/wizard/summary.log`, respecting the RAM-disk policy while keeping all other writes confined to `~/.serial_lcd/config.toml`.
+- **Docs/tests**: README + CLI help now describe the wizard flag/env knobs, the roadmap frameworks list includes the module, and unit tests cover the scripted wizard path so CI can validate the flow without hardware input.
 
 ---
 

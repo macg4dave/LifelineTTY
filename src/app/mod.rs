@@ -26,6 +26,7 @@ pub mod serial_shell;
 mod telemetry;
 mod tunnel;
 mod watchdog;
+mod wizard;
 
 use crate::display::overlays::{render_frame_once, render_reconnecting};
 use crate::serial::backoff::BackoffController;
@@ -109,6 +110,7 @@ impl App {
     }
 
     pub fn from_options(opts: RunOptions) -> Result<Self> {
+        wizard::maybe_run(&opts)?;
         let cfg_file = Config::load_or_default()?;
         let merged = AppConfig::from_sources(cfg_file, opts);
         crate::config::validate_baud(merged.baud)?;

@@ -2,10 +2,13 @@ use lifelinetty::{
     app::{App, AppConfig},
     cli::{Command, RunOptions},
     config::{Config, DisplayDriver},
+    negotiation::RolePreference,
     payload::{Defaults as PayloadDefaults, RenderFrame},
 };
 use std::{
-    env, fs,
+    env,
+    ffi::{OsStr, OsString},
+    fs,
     path::{Path, PathBuf},
     sync::{Mutex, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
@@ -25,16 +28,10 @@ fn temp_home() -> PathBuf {
 
 fn with_temp_home<F: FnOnce(&Path)>(f: F) {
     let _guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
-    let original_home = env::var_os("HOME");
     let home = temp_home();
     fs::create_dir_all(&home).expect("failed to create temp HOME");
-    env::set_var("HOME", &home);
+    let _home_guard = EnvVarGuard::set_path("HOME", &home);
     f(&home);
-    if let Some(val) = original_home {
-        env::set_var("HOME", val);
-    } else {
-        env::remove_var("HOME");
-    }
     let _ = fs::remove_dir_all(home);
 }
 
@@ -44,11 +41,57 @@ fn write_config(home: &Path, contents: &str) {
     fs::write(cfg_dir.join("config.toml"), contents).expect("failed to write config");
 }
 
+struct EnvVarGuard {
+    key: &'static str,
+    original: Option<OsString>,
+}
+
+impl EnvVarGuard {
+    fn set_path(key: &'static str, value: &Path) -> Self {
+        Self::set_os_str(key, value.as_os_str())
+    }
+
+    fn set_str(key: &'static str, value: &str) -> Self {
+        Self::set_os_str(key, OsStr::new(value))
+    }
+
+    fn set_os_str(key: &'static str, value: &OsStr) -> Self {
+        let original = env::var_os(key);
+        env::set_var(key, value);
+        Self { key, original }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        if let Some(previous) = self.original.take() {
+            env::set_var(self.key, previous);
+        } else {
+            env::remove_var(self.key);
+        }
+    }
+}
+
+fn install_wizard_script(home: &Path, name: &str, contents: &str) -> EnvVarGuard {
+    let script_path = home.join(name);
+    fs::write(&script_path, contents).expect("failed to write wizard script");
+    EnvVarGuard::set_path("LIFELINETTY_WIZARD_SCRIPT", &script_path)
+}
+
+fn install_default_wizard_script(home: &Path) -> EnvVarGuard {
+    install_wizard_script(
+        home,
+        "wizard_defaults.txt",
+        "/dev/ttyUSB0\n9600\n16\n2\nauto\n",
+    )
+}
+
 // B3/B4/B2: CLI + storage guardrails + device precedence (library-level to avoid hardware dependency)
 
 #[test]
 fn rejects_log_file_outside_cache() {
-    with_temp_home(|_| {
+    with_temp_home(|home| {
+        let _script_guard = install_default_wizard_script(home);
         let mut opts = RunOptions::default();
         opts.log_file = Some("/tmp/out.log".into());
         let err = App::from_options(opts)
@@ -63,17 +106,12 @@ fn rejects_log_file_outside_cache() {
 
 #[test]
 fn rejects_env_log_path_outside_cache() {
-    with_temp_home(|_| {
-        let original = env::var_os("LIFELINETTY_LOG_PATH");
-        env::set_var("LIFELINETTY_LOG_PATH", "/tmp/env.log");
+    with_temp_home(|home| {
+        let _script_guard = install_default_wizard_script(home);
+        let _log_guard = EnvVarGuard::set_str("LIFELINETTY_LOG_PATH", "/tmp/env.log");
         let err = App::from_options(RunOptions::default())
             .err()
             .expect("expected env log path to be rejected");
-        if let Some(val) = original {
-            env::set_var("LIFELINETTY_LOG_PATH", val);
-        } else {
-            env::remove_var("LIFELINETTY_LOG_PATH");
-        }
         assert!(
             format!("{err}").contains("/run/serial_lcd_cache"),
             "error did not mention cache dir: {err}"
@@ -99,10 +137,9 @@ fn help_lists_core_flags() {
         );
     }
 
-    assert!(
-        help.contains("--serialsh"),
-        "help output missing --serialsh: {help}"
-    );
+    for flag in ["--serialsh", "--wizard"] {
+        assert!(help.contains(flag), "help output missing {flag}: {help}");
+    }
 }
 
 #[test]
@@ -174,8 +211,87 @@ display_driver = "hd44780-driver"
     });
 }
 
+#[test]
+fn wizard_auto_runs_with_script_when_missing_config() {
+    with_temp_home(|home| {
+        let _script_guard = install_wizard_script(
+            home,
+            "wizard_answers.txt",
+            "/dev/ttyS9\n19200\n16\n2\nserver\n",
+        );
+
+        let app = App::from_options(RunOptions::default()).expect("wizard-driven app init failed");
+        drop(app);
+
+        let cfg = Config::load_or_default().expect("config load failed");
+        assert_eq!(cfg.device, "/dev/ttyS9");
+        assert_eq!(cfg.baud, 19_200);
+        assert_eq!(cfg.cols, 16);
+        assert_eq!(cfg.rows, 2);
+        assert_eq!(cfg.negotiation.preference, RolePreference::PreferServer);
+    });
+}
+
+#[test]
+fn wizard_skips_when_config_exists_without_force() {
+    with_temp_home(|home| {
+        write_config(
+            home,
+            r#"
+device = "/dev/ttyAMA0"
+baud = 38400
+rows = 4
+cols = 20
+            "#,
+        );
+
+        let _script_guard = install_wizard_script(
+            home,
+            "wizard_skip.txt",
+            "/dev/ttyUSB9\n57600\n20\n4\nclient\n",
+        );
+
+        let app = App::from_options(RunOptions::default()).expect("app init failed");
+        drop(app);
+
+        let cfg = Config::load_or_default().expect("config load failed");
+        assert_eq!(cfg.device, "/dev/ttyAMA0");
+        assert_eq!(cfg.baud, 38_400);
+        assert_eq!(cfg.negotiation.preference, RolePreference::NoPreference);
+    });
+}
+
+#[test]
+fn wizard_force_env_overrides_existing_config() {
+    with_temp_home(|home| {
+        write_config(
+            home,
+            r#"
+device = "/dev/ttyAMA0"
+baud = 38400
+rows = 4
+cols = 20
+            "#,
+        );
+
+        let _script_guard = install_wizard_script(
+            home,
+            "wizard_force.txt",
+            "/dev/ttyACM1\n57600\n20\n4\nclient\n",
+        );
+        let _force_guard = EnvVarGuard::set_str("LIFELINETTY_FORCE_WIZARD", "1");
+
+        let app = App::from_options(RunOptions::default()).expect("app init failed");
+        drop(app);
+
+        let cfg = Config::load_or_default().expect("config load failed");
+        assert_eq!(cfg.device, "/dev/ttyACM1");
+        assert_eq!(cfg.baud, 57_600);
+        assert_eq!(cfg.negotiation.preference, RolePreference::PreferClient);
+    });
+}
+
 mod serialsh_smoke {
-    use super::*;
     use lifelinetty::app::serial_shell::{drive_serial_shell_loop, SerialShellTransport};
     use lifelinetty::payload::{encode_tunnel_msg, TunnelMsgOwned};
     use lifelinetty::serial::fake::FakeSerialPort;

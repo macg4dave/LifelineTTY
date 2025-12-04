@@ -18,6 +18,10 @@ pub fn load_or_default() -> Result<Config> {
     load_from_path(&path)
 }
 
+pub fn default_config_path() -> Result<PathBuf> {
+    config_path()
+}
+
 pub fn load_from_path(path: &Path) -> Result<Config> {
     if !path.exists() {
         let cfg = Config::default();

@@ -188,7 +188,7 @@ Stored at:
 ~/.serial_lcd/config.toml
 ```
 
-By default the daemon listens on `/dev/ttyUSB0` at 9600 8N1. LifelineTTY always starts at 9600 (the enforced minimum) before any higher-speed tuning happens; a first-run wizard coming soon will run automatically to help you explore faster, stable baud rates. Edit the config (or pass CLI flags) to point at `/dev/ttyAMA0`, `/dev/ttyS0`, USB adapters, or any other TTY that exposes your sender.
+By default the daemon listens on `/dev/ttyUSB0` at 9600 8N1. LifelineTTY always starts at 9600 (the enforced minimum) before any higher-speed tuning happens, and the Milestone I first-run wizard now launches automatically the moment `~/.serial_lcd/config.toml` is missing. The wizard walks you through device selection, baud validation, LCD geometry, and role preference, then writes a summary to `/run/serial_lcd_cache/wizard/summary.log`. Edit the config (or pass CLI flags) to point at `/dev/ttyAMA0`, `/dev/ttyS0`, USB adapters, or any other TTY that exposes your sender, and re-run the wizard any time with `lifelinetty --wizard` if you want to revisit those choices.
 
 Example:
 
@@ -250,7 +250,7 @@ Reload config without restarting the daemon:
 | Flag | Purpose | Default / Notes |
 | ---- | ------- | ---------------- |
 | `--device <path>` | Serial device to read newline-delimited JSON from. | `/dev/ttyUSB0` @ 9600 8N1. Override to `/dev/ttyAMA0`, `/dev/ttyS*`, or USB adapters as needed. |
-| `--baud <number>` | Serial baud rate. | `9600` (minimum; first-run wizard coming soon to help you tune higher speeds) |
+| `--baud <number>` | Serial baud rate. | `9600` (minimum enforced before you opt into higher speeds via the wizard or config) |
 | `--flow-control <none\|software\|hardware>` | Override whether RTS/CTS or XON/XOFF is asserted on the UART. | `none` |
 | `--parity <none\|odd\|even>` | Choose parity framing when the remote expects it. | `none` |
 | `--stop-bits <1\|2>` | Select one or two stop bits. | `1` |
@@ -266,7 +266,15 @@ Reload config without restarting the daemon:
 | `--log-file <path>` | Append logs to a file inside `/run/serial_lcd_cache` (also honors `LIFELINETTY_LOG_PATH`). | No file logging unless you provide a cache-rooted path. |
 | `--demo` | Run built-in demo pages to validate wiring—no serial input required. | Disabled by default. |
 | `--serialsh` | Launch the optional serial shell that sends commands through the tunnel and streams remote stdout/stderr plus exit codes. | Disabled by default so daemons keep running headless unless you explicitly opt into the interactive session. |
+| `--wizard` | Run the guided first-run wizard even if a config already exists. | Automatically runs when `~/.serial_lcd/config.toml` is missing; also forceable via `LIFELINETTY_FORCE_WIZARD=1`. |
 | `--help` / `--version` | Display usage or the crate version. | Utility flags that never touch hardware. |
+
+### Guided first-run wizard (Milestone I)
+
+- **Auto-run trigger**: the wizard starts before any run/test mode whenever `~/.serial_lcd/config.toml` is missing. It records the serial device, highest stable baud, LCD geometry, and negotiation role preference, then persists those answers and writes a short transcript to `/run/serial_lcd_cache/wizard/summary.log`.
+- **Manual reruns**: invoke `lifelinetty --wizard` or set `LIFELINETTY_FORCE_WIZARD=1` to re-run the interview even when a config already exists. This is helpful after hardware moves or when testing new baud profiles.
+- **Headless + CI support**: when stdin is not a TTY (systemd, CI), the wizard auto-accepts safe defaults so the daemon can boot unattended. Provide `LIFELINETTY_WIZARD_SCRIPT=/path/to/answers.txt` with newline-delimited responses to script the prompts during testing.
+- **LCD cues + logging**: prompts mirror onto the LCD (when available), and every outcome is appended to `/run/serial_lcd_cache/wizard/summary.log` for auditing alongside serial/log caches.
 
 ### Serial shell mode (Milestone G)
 
@@ -368,6 +376,7 @@ docker buildx build   --platform linux/arm/v6   -f docker/Dockerfile.armv6 .
 ### Repo  
 
 <https://github.com/macg4dave/LifelineTTY>
+
 
 ### Architecture docs  
 

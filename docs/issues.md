@@ -13,4 +13,7 @@ The daemon tries to write to negotiation.log. Make that path writable (requires 
 Serial device permission (if issues recur)
 Ensure the running user has access to ttyS0 (e.g., add to dialout or adjust udev rules). Right now the connect succeeds, so this is secondary.
 
+config.toml does not have server / client sections to store keys
+
+
 

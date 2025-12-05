@@ -340,8 +340,8 @@ mod tests {
     use crate::serial::{DtrBehavior, FlowControlMode, ParityMode, StopBitsMode};
     use std::{
         fs,
-        sync::{Mutex, OnceLock},
         path::PathBuf,
+        sync::{Mutex, OnceLock},
         time::{SystemTime, UNIX_EPOCH},
     };
 

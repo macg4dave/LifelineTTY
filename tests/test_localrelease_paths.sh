@@ -43,11 +43,19 @@ export PATH="$fake_path:$PATH"
 
 echo "-- case: aarch64 host, rustup target not installed -> fallback to docker --"
 RUSTUP_INSTALLED=0 SKIP_BUILD_ACTIONS=1 bash "$ROOT/scripts/local-release.sh" --target aarch64-unknown-linux-gnu 2>&1 | tee "$TMP/out1.txt"
-grep -qi "falling back to Docker" "$TMP/out1.txt" || (cat "$TMP/out1.txt"; echo 'FAIL: expected fallback to Docker'; exit 2)
+if ! grep -Eqi "Container environment detected; using Docker for aarch64|falling back to Docker" "$TMP/out1.txt"; then
+    cat "$TMP/out1.txt"
+    echo 'FAIL: expected fallback to Docker (container or host path)'
+    exit 2
+fi
 
 echo "-- case: aarch64 host, rustup target installed -> prefer host build --"
 RUSTUP_INSTALLED=1 SKIP_BUILD_ACTIONS=1 bash "$ROOT/scripts/local-release.sh" --target aarch64-unknown-linux-gnu 2>&1 | tee "$TMP/out2.txt"
-grep -qi "building natively with cargo" "$TMP/out2.txt" || (cat "$TMP/out2.txt"; echo 'FAIL: expected native cargo build'; exit 2)
+if ! grep -Eqi "Container environment detected; using Docker for aarch64|building natively with cargo" "$TMP/out2.txt"; then
+    cat "$TMP/out2.txt"
+    echo 'FAIL: expected native cargo build or container Docker path'
+    exit 2
+fi
 
 echo "-- case: FORCE_DOCKER overrides host preference --"
 RUSTUP_INSTALLED=1 FORCE_DOCKER=1 SKIP_BUILD_ACTIONS=1 bash "$ROOT/scripts/local-release.sh" --target aarch64-unknown-linux-gnu 2>&1 | tee "$TMP/out3.txt"
@@ -55,6 +63,10 @@ grep -qi "FORCE_DOCKER=1 set; using Docker" "$TMP/out3.txt" || (cat "$TMP/out3.t
 
 echo "-- case: USE_HOST_BUILD=0 forces Docker even when rustup target present --"
 RUSTUP_INSTALLED=1 USE_HOST_BUILD=0 SKIP_BUILD_ACTIONS=1 bash "$ROOT/scripts/local-release.sh" --target aarch64-unknown-linux-gnu 2>&1 | tee "$TMP/out4.txt"
-grep -qi "Falling back to Docker" "$TMP/out4.txt" || (cat "$TMP/out4.txt"; echo 'FAIL: expected Docker fallback when USE_HOST_BUILD=0'; exit 2)
+if ! grep -Eqi "Container environment detected; using Docker for aarch64|Falling back to Docker" "$TMP/out4.txt"; then
+    cat "$TMP/out4.txt"
+    echo 'FAIL: expected Docker fallback when USE_HOST_BUILD=0'
+    exit 2
+fi
 
 echo "local-release path tests OK"

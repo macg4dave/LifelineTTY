@@ -1,0 +1,36 @@
+version: "3.8"
+
+services:
+  remote:
+    image: lscr.io/linuxserver/openssh-server:latest
+    container_name: lifelinetty-remote
+    environment:
+      - PUID=0
+      - PGID=0
+      - TZ=UTC
+      - PASSWORD_ACCESS=true
+      - USER_PASSWORD=devpass
+      - USER_NAME=root
+    ports:
+      - "2222:22"
+    volumes:
+      - cache:/run/serial_lcd_cache
+      - remote-home:/root
+    restart: unless-stopped
+
+  local:
+    image: debian:stable-slim
+    container_name: lifelinetty-local
+    working_dir: /workspace
+    command: ["bash"]
+    tty: true
+    stdin_open: true
+    volumes:
+      - ./:/workspace:ro
+      - cache:/run/serial_lcd_cache
+    depends_on:
+      - remote
+
+volumes:
+  cache:
+  remote-home:

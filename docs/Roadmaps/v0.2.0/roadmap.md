@@ -135,7 +135,7 @@ Record outcomes and defects in RAM-disk logs; reproduce with tests before closin
 
 ---
 
-### Milestone 1 — Docker-to-docker devtest loop (--In progress)
+### Milestone 1 — Docker-to-docker devtest loop (Completed 5 Dec 2025)
 
 > Detailed playbook: see `docs/Roadmaps/v0.2.0/milestone_1.md` (Docker run + compose recipes, CI/headless flow, test matrix, AI rerun checklist).
 
@@ -144,6 +144,7 @@ Record outcomes and defects in RAM-disk logs; reproduce with tests before closin
 - **Required steps:** Pre-flight checks (SSH reachability, config templates present, remote service off), local build, binary sync + chmod, remote cleanup, then window launches for (1) persistent SSH shell, (2) remote run, (3) local comparison run. Config paths remain flexible (`--config-file` honored) so you can vary TTY (`/dev/ttyUSB0`, `/dev/ttyS0`), baud presets, LCD geometries, demos, and logging tweaks without editing the scripts. For hardware trials, the same flow still applies against Pi hosts.
 - **Logging & storage:** Keep watcher active on `/run/serial_lcd_cache`. Logs, cache snapshots, and terminal outputs stay under that RAM-disk—never `/etc` or other persistent paths. `docs/dev_test_real.md` remains the workflow reference and checklist; `devtest/dev.conf.example` keeps defaults charter-compliant (9600 on `/dev/ttyUSB0`, cache watcher, service reminder).
 - **Docs/tests:** Capture every matrix scenario (baseline, alt-TTY, higher baud, etc.) under `/run/serial_lcd_cache/milestone1/<scenario>-YYYYMMDD`, copy them via `docker cp` or `scp` for field-ops review, and annotate the replay in `docs/dev_test_real.md` along with the payload set used. Any defects unearthed in this loop must land with regression tests (`tests/bin_smoke.rs`, `tests/integration_mock.rs`, etc.) before the milestone can be marked done.
+- **Status:** Milestone 1 is documented end-to-end: quickstart recipes, container topology, config templates, log placement, CI recipe, and AI re-run checklist live in `docs/Roadmaps/v0.2.0/milestone_1.md`, proving the build job can be audited entirely within `/run/serial_lcd_cache` and `~/.serial_lcd/config.toml`.
 
 ### Milestone 2 — Enhanced first-run wizard (--Planned)
 

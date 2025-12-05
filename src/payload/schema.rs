@@ -147,4 +147,12 @@ mod tests {
         let err = decode_tunnel_frame(&raw).unwrap_err();
         assert!(format!("{err}").contains("tunnel frame exceeds"));
     }
+
+    #[test]
+    fn heartbeat_round_trips_with_crc() {
+        let msg = TunnelMsgOwned::Heartbeat;
+        let encoded = encode_tunnel_msg(&msg).unwrap();
+        let decoded = decode_tunnel_frame(&encoded).unwrap();
+        assert_eq!(decoded, msg);
+    }
 }

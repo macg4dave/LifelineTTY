@@ -36,9 +36,11 @@ mkdir -p /tmp/lifelinetty-cache
 # Remote (SSHD + cache + config)
 docker run -d --name lifelinetty-remote \
   -p 2222:22 \
+  -e PUID=0 -e PGID=0 -e TZ=UTC \
+  -e PASSWORD_ACCESS=true -e USER_PASSWORD=devpass -e USER_NAME=root \
   -v /tmp/lifelinetty-cache:/run/serial_lcd_cache \
   -v lifelinetty-remote-home:/root \
-  linuxserver/openssh-server:latest  # or your SSHD base
+  lscr.io/linuxserver/openssh-server:latest  # or your SSHD base
 
 # Local runner (shares cache, mounts workspace read-only; adjust path)
 docker run -it --name lifelinetty-local --rm \
@@ -46,6 +48,8 @@ docker run -it --name lifelinetty-local --rm \
   -v /tmp/lifelinetty-cache:/run/serial_lcd_cache \
   -w /workspace \
   debian:stable-slim bash
+
+# linuxserver/openssh-server is configured for dev-only password auth: USER_NAME=root, USER_PASSWORD=devpass.
 
 # Inside lifelinetty-local
 apt-get update && apt-get install -y ssh scp curl ca-certificates git
@@ -62,25 +66,36 @@ cp devtest/dev.conf.example devtest/dev.conf
 ## Quickstart with docker-compose (recommended)
 
 ```yaml
-# docker-compose.milestone1.yml
+# docker-compose.milestone1.yml (checked into repo root)
 version: "3.8"
 services:
   remote:
-    image: linuxserver/openssh-server:latest
+    image: lscr.io/linuxserver/openssh-server:latest
     container_name: lifelinetty-remote
+    environment:
+      - PUID=0
+      - PGID=0
+      - TZ=UTC
+      - PASSWORD_ACCESS=true
+      - USER_PASSWORD=devpass
+      - USER_NAME=root
     ports: ["2222:22"]
     volumes:
       - cache:/run/serial_lcd_cache
       - remote-home:/root
+    restart: unless-stopped
   local:
     image: debian:stable-slim
     container_name: lifelinetty-local
     working_dir: /workspace
-    command: bash
+    command: ["bash"]
     tty: true
+    stdin_open: true
     volumes:
       - ./:/workspace:ro
       - cache:/run/serial_lcd_cache
+    depends_on:
+      - remote
 volumes:
   cache:
   remote-home:
@@ -90,12 +105,12 @@ Then:
 
 ```bash
 docker compose -f docker-compose.milestone1.yml up -d
-# Exec into local runner
+# Exec into local runner (password auth is enabled for dev only: USER_NAME=root, USER_PASSWORD=devpass)
 docker exec -it lifelinetty-local bash
 apt-get update && apt-get install -y ssh scp curl ca-certificates git
 cp devtest/dev.conf.example devtest/dev.conf
 # Set PI_HOST=remote, PI_USER=root, PI_BIN=/opt/lifelinetty/lifelinetty
-./devtest/run-dev.sh
+TERMINAL_CMD="" ENABLE_SSH_SHELL=false ./devtest/run-dev.sh
 ```
 
 ## Dev loop knobs (run-dev.sh)
@@ -108,8 +123,9 @@ Key envs in `devtest/dev.conf`:
 - `COMMON_ARGS` — defaults: `--run --device /dev/ttyUSB0 --baud 9600 --cols 16 --rows 2`.
 - `REMOTE_ARGS`, `LOCAL_ARGS` — per-side overrides; you can pass `--config-file <path>` here.
 - `CONFIG_SOURCE_FILE`, `LOCAL_CONFIG_SOURCE_FILE`, `REMOTE_CONFIG_SOURCE_FILE` — scenario templates copied into `~/.serial_lcd/config.toml`.
-- `TERMINAL_CMD` — GUI terminals; leave empty in headless/CI to run inline.
-- `ENABLE_LOG_PANE`, `LOG_WATCH_CMD` — optional log watcher (defaults to `watch -n 0.5 ls -lh /run/serial_lcd_cache`).
+- `SCENARIO_NAME`, `SCENARIO_DATE`, `SCENARIO_DIR` — tag per-run bundles; logs land under `/run/serial_lcd_cache/milestone1/<scenario>-YYYYMMDD/{local,remote}` with `LIFELINETTY_LOG_PATH` set automatically for both sides.
+- `TERMINAL_CMD` — GUI terminals; leave empty in headless/CI to run inline. Set `ENABLE_SSH_SHELL=false` to skip the interactive shell pane when headless.
+- `ENABLE_LOG_PANE`, `LOG_WATCH_CMD` — optional log watcher (defaults to `watch -n 0.5 ls -lh $SCENARIO_DIR`).
 - `PKILL_PATTERN` — kills stale remote lifelinetty before launch.
 
 Pre-flight expectations:
@@ -121,7 +137,7 @@ Pre-flight expectations:
 
 Launch behavior:
 
-- Creates temp HOME for local side, copies chosen template, builds (or uses provided binary), scps to remote, chmod + pkill stale processes, then launches remote/local commands (and optional log watcher). Titles: SSH / Remote / Local / Logs.
+- Creates temp HOME for local side, copies chosen template, builds (or uses provided binary), scps to remote, chmod + pkill stale processes, then launches remote/local commands (and optional log watcher). Each side sets `LIFELINETTY_LOG_PATH` inside the scenario bundle at `/run/serial_lcd_cache/milestone1/<scenario>-YYYYMMDD/{local,remote}`. Titles: SSH / Remote / Local / Logs. In headless/CI runs (`TERMINAL_CMD=""`), the script backgrounds processes and can skip the SSH pane via `ENABLE_SSH_SHELL=false`.
 
 ## Test matrix for this milestone
 
@@ -178,3 +194,17 @@ When asked to rerun or debug:
 - Provides test matrix + expected log placement under `/run/serial_lcd_cache/milestone1/`.
 - Describes CI/headless flow and AI re-run instructions.
 - Respects charter guardrails (no new flags/transports; cache/config paths only).
+
+## Status & evidence
+
+Milestone 1 is complete once the documented build job can be executed and audited entirely under `/run/serial_lcd_cache` and `~/.serial_lcd/config.toml`. The following sections provide the evidence that each requirement is satisfied:
+
+| Requirement | Evidence |
+| --- | --- |
+| Container topology + quickstart | "Container topology", "Quickstart with `docker run`", and "Quickstart with docker-compose" sections describe the paired containers, shared cache, and verbatim `docker run` / compose commands that operators should follow. |
+| Dev loop knobs & templates | "Dev loop knobs" lists the key `devtest/dev.conf` knobs, and `devtest/run-dev.sh` copies the referenced templates (`devtest/config/*.toml`) into each `~/.serial_lcd/config.toml`. The doc references `--config-file` overrides for scenarios as well. |
+| Test matrix & log placement | "Test matrix" explicitly enumerates the baseline, alt-TTY, 20×4, higher baud, and `--demo` scenarios plus the requirement to log each run under `/run/serial_lcd_cache/milestone1/<scenario>-YYYYMMDD` for easy `docker cp` retrieval. |
+| CI/headless recipe & AI rerun checklist | "CI/headless recipe" describes the env vars for headless invocations, and "AI re-run + debug checklist" lists the steps an AI or operator should repeat along with the cache/log collection commands. |
+| Charter guardrails & troubleshooting | The opening summary, guardrails, and "Troubleshooting" section reiterate the `/run/serial_lcd_cache` + `~/.serial_lcd/config.toml` storage policy, stable flags, and RSS/logging expectations mandated by the charter. |
+
+With these references in place, the roadmap can now consider Milestone 1 fulfilled for release planning, and every artifact required for the build-based devtest loop is described for operators, CI, and AI assistants.

@@ -40,12 +40,20 @@ LOCAL_ARGS=""
 BUILD_CMD="cargo build"
 
 "# Terminal program used to open SSH/remote/local/log windows (needs to support --title and -- bash -lc).
+# Set TERMINAL_CMD="" for headless/container runs; the script will background the commands instead.
 TERMINAL_CMD=gnome-terminal
+# ENABLE_SSH_SHELL=false  # disable the interactive SSH pane when running headless
 
 "# Enable log watcher windows that tail /run/serial_lcd_cache on the Pi.
 # Keep watchers inside CACHE_DIR to respect the storage policy and record per-scenario snapshots (e.g., /run/serial_lcd_cache/milestone1/baseline).
 ENABLE_LOG_PANE=true
 LOG_WATCH_CMD="watch -n 0.5 ls -lh /run/serial_lcd_cache"
+
+"# Milestone 1 log bundles: each run writes logs under /run/serial_lcd_cache/milestone1/<scenario>-YYYYMMDD/{local,remote}
+# Override to tag scenarios (e.g., SCENARIO_NAME=baseline, stress-19200) or to lock a date when replaying evidence.
+# SCENARIO_NAME=baseline
+# SCENARIO_DATE=$(date +%Y%m%d)
+# SCENARIO_DIR=/run/serial_lcd_cache/milestone1/${SCENARIO_NAME}-${SCENARIO_DATE}
 
 "# Pattern used to kill any stale remote processes before launching.
 # Stop lifelinetty.service on the Pi before running this loop to avoid device contention.

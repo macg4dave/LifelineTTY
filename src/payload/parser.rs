@@ -320,6 +320,9 @@ pub struct Defaults {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct Payload {
+    /// Optional frame type tag; tolerated so frames that include "type" won't be rejected.
+    #[serde(rename = "type", default)]
+    pub frame_type: Option<String>,
     pub line1: String,
     pub line2: String,
     #[serde(default)]
@@ -603,6 +606,7 @@ mod tests {
     #[test]
     fn checksum_validates() {
         let payload = Payload {
+            frame_type: None,
             line1: "Hi".into(),
             line2: "There".into(),
             bar: None,
@@ -641,6 +645,7 @@ mod tests {
     #[test]
     fn checksum_validates_with_schema_v1() {
         let payload = Payload {
+            frame_type: None,
             line1: "Hi".into(),
             line2: "There".into(),
             bar: None,

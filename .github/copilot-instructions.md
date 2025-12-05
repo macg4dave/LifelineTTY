@@ -72,3 +72,27 @@ Details:
 - When adding protocol/CLI changes, update `spec.txt` (or create it if missing) and annotate roadmap items with the new state.
 - Comment non-obvious state machines (render loop, serial backoff, payload parser) so future contributors can reason about them.
 - All doc updates must ship with their accompanying code changes.
+
+# Bash Scripting Rules for This Repository
+
+The project is primarily Rust, but occasionally uses Bash scripts for tests and tooling.
+Whenever the user requests Bash, follow these strict rules:
+
+1. Shell: bash only. Do not use sh, zsh, or POSIX-generic syntax.
+2. Platform: Linux only (Fedora/Debian). Avoid macOS-specific commands or flags.
+3. Output must be real, runnable Bash. Do not invent flags or commands.
+4. Start scripts with:
+       set -euo pipefail
+5. Use strict quoting: "$var"
+6. Reading files: use 'while IFS= read -r line'; avoid 'for x in $(...)'.
+7. For paths: prefer explicit variables or absolute paths. Avoid guessing.
+8. Error output: use >&2 and non-zero exit codes.
+9. No pseudo-code blocks and no wrapping everything in functions unless asked.
+10. Keep scripts minimal, predictable, and aligned with normal Linux tooling
+    (cp, rsync, scp, ssh, grep, sed, awk, rg, jq).
+12. Never change the project layout or add new files unless requested.
+13. Respect cross-env scripting: scripts may run locally or on a remote Pi via SSH.
+14. Use shellcheck annotations for exceptions.
+
+
+Always prioritise stability and compatibility over cleverness. 

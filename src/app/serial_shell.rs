@@ -197,4 +197,37 @@ mod tests {
         assert_eq!(exit_code, 1);
         assert!(String::from_utf8_lossy(&stderr).contains("remote busy"));
     }
+
+    #[test]
+    fn heartbeat_frames_are_ignored_between_stdout_and_exit() {
+        let mut serial = FakeSerialPort::new(vec![
+            Ok(encoded(TunnelMsgOwned::Heartbeat)),
+            Ok(encoded(TunnelMsgOwned::Stdout {
+                chunk: b"pong".to_vec(),
+            })),
+            Ok(encoded(TunnelMsgOwned::Heartbeat)),
+            Ok(encoded(TunnelMsgOwned::Exit { code: 0 })),
+        ]);
+        let mut input = Cursor::new("ping\nexit\n");
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+
+        let exit_code = drive_serial_shell_loop(&mut serial, &mut input, &mut stdout, &mut stderr)
+            .expect("loop failed");
+
+        assert_eq!(exit_code, 0);
+        assert!(stderr.is_empty(), "stderr should be empty: {stderr:?}");
+        let output = String::from_utf8_lossy(&stdout);
+        assert!(output.contains("pong"), "stdout missing pong: {output}");
+        assert!(output.matches("serialsh> ").count() >= 2);
+        assert_eq!(
+            serial.writes(),
+            &[
+                "INIT".to_string(),
+                encoded(TunnelMsgOwned::CmdRequest {
+                    cmd: "ping".into(),
+                }),
+            ]
+        );
+    }
 }

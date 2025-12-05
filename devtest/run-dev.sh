@@ -2,7 +2,36 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONF_FILE="$SCRIPT_DIR/dev.conf"
+CONF_FILE_DEFAULT="$SCRIPT_DIR/dev.conf"
+CONF_FILE_REAL="$SCRIPT_DIR/dev_real.conf"
+CONF_FILE="$CONF_FILE_DEFAULT"
+
+print_usage() {
+    cat <<'EOF'
+Usage: run-dev.sh [--real] [--help]
+
+  --real   Use dev_real.conf (real host + real Pi wiring)
+  --help   Show this message
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --real)
+            CONF_FILE="$CONF_FILE_REAL"
+            ;;
+        --help|-h)
+            print_usage
+            exit 0
+            ;;
+        *)
+            echo "[ERROR] Unknown argument: $1" >&2
+            print_usage >&2
+            exit 1
+            ;;
+    esac
+    shift
+done
 
 if [[ -f "$CONF_FILE" ]]; then
     # shellcheck disable=SC1090
@@ -15,6 +44,36 @@ fi
 command -v ssh >/dev/null 2>&1 || { echo "[ERROR] ssh is required." >&2; exit 1; }
 command -v scp >/dev/null 2>&1 || { echo "[ERROR] scp is required." >&2; exit 1; }
 
+CACHE_DIR=${CACHE_DIR:-/run/serial_lcd_cache}
+if [[ "$CACHE_DIR" != "/run/serial_lcd_cache" ]]; then
+    cat <<'EOF' >&2
+[ERROR] CACHE_DIR must be /run/serial_lcd_cache to satisfy the storage policy.
+        Please create it once with:
+          sudo mkdir -p /run/serial_lcd_cache && sudo chown "$USER":"$USER" /run/serial_lcd_cache
+EOF
+    exit 1
+fi
+if [[ ! -d "$CACHE_DIR" ]]; then
+    if ! mkdir -p "$CACHE_DIR" 2>/dev/null; then
+        if command -v sudo >/dev/null 2>&1; then
+            echo "[INFO] Creating $CACHE_DIR with sudo (one-time setup)" >&2
+            if ! sudo mkdir -p "$CACHE_DIR" || ! sudo chown "$USER":"$USER" "$CACHE_DIR"; then
+                echo "[ERROR] Unable to create $CACHE_DIR. Run 'sudo mkdir -p $CACHE_DIR && sudo chown $USER:$USER $CACHE_DIR' then retry." >&2
+                exit 1
+            fi
+        else
+            echo "[ERROR] Create $CACHE_DIR manually (sudo mkdir -p ...) then rerun." >&2
+            exit 1
+        fi
+    fi
+fi
+SCENARIO_NAME=${SCENARIO_NAME:-baseline}
+SCENARIO_DATE=${SCENARIO_DATE:-$(date +%Y%m%d)}
+SCENARIO_ROOT=${SCENARIO_ROOT:-"$CACHE_DIR/milestone1"}
+SCENARIO_DIR=${SCENARIO_DIR:-"$SCENARIO_ROOT/${SCENARIO_NAME}-${SCENARIO_DATE}"}
+LOCAL_SCENARIO_DIR="$SCENARIO_DIR/local"
+REMOTE_SCENARIO_DIR="$SCENARIO_DIR/remote"
+
 PI_USER=${PI_USER:-pi}
 PI_BIN=${PI_BIN:-/home/"$PI_USER"/lifelinetty/lifelinetty}
 REMOTE_ARCH=${REMOTE_ARCH:-}
@@ -24,25 +83,47 @@ LOCAL_ARCH=${LOCAL_ARCH:-}
 : "${PI_BIN:?PI_BIN must be set in dev.conf}"
 
 TERMINAL_CMD=${TERMINAL_CMD:-gnome-terminal}
+ENABLE_SSH_SHELL=${ENABLE_SSH_SHELL:-true}
+
+# Headless-friendly defaults when running inside a container (e.g., docker-compose
+# milestone1). In those cases there's typically no GUI terminal, so default to
+# inline/background execution and skip the SSH pane unless explicitly enabled.
+if [[ -f /.dockerenv ]]; then
+    if [[ -z ${TERMINAL_CMD_OVERRIDE:-} ]]; then
+        TERMINAL_CMD=""
+    fi
+    if [[ -z ${ENABLE_SSH_SHELL_OVERRIDE:-} ]]; then
+        ENABLE_SSH_SHELL=false
+    fi
+fi
 
 
 LOCAL_BIN=${LOCAL_BIN:-target/debug/lifelinetty}
 LOCAL_BIN_SOURCE=${LOCAL_BIN_SOURCE:-}
 REMOTE_BIN_SOURCE=${REMOTE_BIN_SOURCE:-}
-COMMON_ARGS=${COMMON_ARGS:---demo}
+COMMON_ARGS=${COMMON_ARGS:-run --baud 9600 --cols 16 --rows 2}
 REMOTE_ARGS=${REMOTE_ARGS:-}
 LOCAL_ARGS=${LOCAL_ARGS:-}
 BUILD_CMD=${BUILD_CMD:-cargo build}
 ENABLE_LOG_PANE=${ENABLE_LOG_PANE:-false}
-LOG_WATCH_CMD=${LOG_WATCH_CMD:-watch -n 0.5 ls -lh /run/serial_lcd_cache}
+LOG_WATCH_CMD=${LOG_WATCH_CMD:-"watch -n 0.5 ls -lh $SCENARIO_DIR"}
 PKILL_PATTERN=${PKILL_PATTERN:-lifelinetty}
 
 # Scenario-aware config templates. By default, use a single template for both
 # local and remote, but allow overrides so dev.conf can point each side at a
 # different TOML if needed.
-CONFIG_SOURCE_FILE=${CONFIG_SOURCE_FILE:-"$SCRIPT_DIR/config/local/default.toml"}
-LOCAL_CONFIG_SOURCE_FILE=${LOCAL_CONFIG_SOURCE_FILE:-"$CONFIG_SOURCE_FILE"}
-REMOTE_CONFIG_SOURCE_FILE=${REMOTE_CONFIG_SOURCE_FILE:-"$SCRIPT_DIR/config/remote/default.toml"}
+resolve_path() {
+    local p="$1"
+    if [[ "$p" = /* ]]; then
+        printf '%s' "$p"
+    else
+        printf '%s/%s' "$SCRIPT_DIR" "$p"
+    fi
+}
+
+CONFIG_SOURCE_FILE=$(resolve_path "${CONFIG_SOURCE_FILE:-config/local/default.toml}")
+LOCAL_CONFIG_SOURCE_FILE=$(resolve_path "${LOCAL_CONFIG_SOURCE_FILE:-$CONFIG_SOURCE_FILE}")
+REMOTE_CONFIG_SOURCE_FILE=$(resolve_path "${REMOTE_CONFIG_SOURCE_FILE:-config/remote/default.toml}")
 
 if [[ ! -f "$LOCAL_CONFIG_SOURCE_FILE" ]]; then
     echo "[ERROR] Missing local dev config template $LOCAL_CONFIG_SOURCE_FILE" >&2
@@ -53,22 +134,26 @@ if [[ ! -f "$REMOTE_CONFIG_SOURCE_FILE" ]]; then
     exit 1
 fi
 
-LOCAL_CONFIG_HOME_SET=false
+if [[ ! "$SCENARIO_DIR" =~ ^${CACHE_DIR}/ ]]; then
+    echo "[ERROR] SCENARIO_DIR must live inside $CACHE_DIR (got $SCENARIO_DIR)" >&2
+    exit 1
+fi
+
+if ! mkdir -p "$LOCAL_SCENARIO_DIR"; then
+    echo "[ERROR] Unable to create local scenario directory $LOCAL_SCENARIO_DIR" >&2
+    exit 1
+fi
+echo "[CACHE] Scenario bundle will be stored under $SCENARIO_DIR"
+
 if [[ -z "${LOCAL_CONFIG_HOME:-}" ]]; then
+    # Preserve the temporary HOME for the lifetime of the spawned daemon to keep
+    # the copied config reachable (B4: CLI dev loop fidelity).
     LOCAL_CONFIG_HOME=$(mktemp -d -t lifelinetty-home.XXXXXX)
-    LOCAL_CONFIG_HOME_SET=true
 fi
 LOCAL_CONFIG_DIR="$LOCAL_CONFIG_HOME/.serial_lcd"
 mkdir -p "$LOCAL_CONFIG_DIR"
 cp "$LOCAL_CONFIG_SOURCE_FILE" "$LOCAL_CONFIG_DIR/config.toml"
 echo "[CONFIG] Using local template $LOCAL_CONFIG_SOURCE_FILE (local HOME=$LOCAL_CONFIG_HOME)"
-
-cleanup_local_home() {
-    if $LOCAL_CONFIG_HOME_SET && [[ -d "$LOCAL_CONFIG_HOME" ]]; then
-        rm -rf "$LOCAL_CONFIG_HOME"
-    fi
-}
-trap cleanup_local_home EXIT
 
 printf '[BUILD] Using "%s"\n' "$BUILD_CMD"
 bash -c "$BUILD_CMD"
@@ -108,7 +193,9 @@ SSH_OPTIONS=(-o BatchMode=yes -o ConnectTimeout=5)
 
 run_remote_cmd() {
     local cmd="$1"
-    if ! ssh "${SSH_OPTIONS[@]}" "$remote_target" "$cmd"; then
+    local quoted_cmd
+    printf -v quoted_cmd '%q' "$cmd"
+    if ! ssh "${SSH_OPTIONS[@]}" "$remote_target" bash -lc "$quoted_cmd"; then
         local rc=$?
         echo "[ERROR] Remote command failed on $remote_target: $cmd" >&2
         echo "[ERROR] See above for the ssh output." >&2
@@ -149,7 +236,25 @@ deploy_remote_config() {
 assert_remote_reachable
 echo "[DEPLOY] Ensuring remote directory $remote_dir"
 ensure_remote_dir
+echo "[CACHE] Ensuring remote scenario directory $REMOTE_SCENARIO_DIR"
+if ! run_remote_cmd "mkdir -p '$REMOTE_SCENARIO_DIR'"; then
+        echo "[WARN] Failed to create $REMOTE_SCENARIO_DIR; trying sudo" >&2
+        if ! run_remote_cmd "sudo mkdir -p '$REMOTE_SCENARIO_DIR' && sudo chown $PI_USER:$PI_USER '$REMOTE_SCENARIO_DIR'"; then
+                cat <<'EOF' >&2
+[ERROR] Unable to create the remote scenario directory under /run/serial_lcd_cache.
+Run on the Pi once:
+    sudo mkdir -p /run/serial_lcd_cache && sudo chown $USER:$USER /run/serial_lcd_cache
+Then rerun run-dev.sh.
+EOF
+                exit 1
+        fi
+fi
 deploy_remote_config
+
+LOCAL_CONFIG_PATH="$LOCAL_CONFIG_DIR/config.toml"
+REMOTE_CONFIG_PATH="\$HOME/.serial_lcd/config.toml"
+LOCAL_CONFIG_ARG="--config-file $LOCAL_CONFIG_PATH"
+REMOTE_CONFIG_ARG="--config-file $REMOTE_CONFIG_PATH"
 
 echo "[DEPLOY] Copying $REMOTE_BIN_SOURCE to $remote_target:$PI_BIN"
 scp "${SSH_OPTIONS[@]}" "$REMOTE_BIN_SOURCE" "$remote_target:$PI_BIN"
@@ -161,6 +266,11 @@ if ! run_remote_cmd "pkill -f '$PKILL_PATTERN' || true"; then
     run_remote_cmd "echo '[REMOTE-DEBUG] user: ' \$(whoami); id; ls -ld '$remote_dir'; ls -l '$PI_BIN' || true; ps -ef | grep -i lifelinetty || true" || true
 fi
 
+LOCAL_LOG_PATH="$LOCAL_SCENARIO_DIR/lifelinetty-local.log"
+REMOTE_LOG_PATH="$REMOTE_SCENARIO_DIR/lifelinetty-remote.log"
+echo "[LOG] Local log -> $LOCAL_LOG_PATH"
+echo "[LOG] Remote log -> $REMOTE_LOG_PATH"
+
 build_cmd_string() {
     local cmd="$1"; shift
     for chunk in "$@"; do
@@ -170,15 +280,26 @@ build_cmd_string() {
     printf '%s' "$cmd"
 }
 
-REMOTE_CMD=$(build_cmd_string "$PI_BIN" "$COMMON_ARGS" "$REMOTE_ARGS")
-LOCAL_CMD=$(build_cmd_string "HOME=$LOCAL_CONFIG_HOME" "$LOCAL_BIN_SOURCE" "$COMMON_ARGS" "$LOCAL_ARGS")
+REMOTE_ENV="LIFELINETTY_LOG_PATH=$REMOTE_LOG_PATH"
+LOCAL_ENV="HOME=$LOCAL_CONFIG_HOME LIFELINETTY_LOG_PATH=$LOCAL_LOG_PATH"
+REMOTE_CMD=$(build_cmd_string "$REMOTE_ENV $PI_BIN" "$COMMON_ARGS" "$REMOTE_CONFIG_ARG" "$REMOTE_ARGS")
+LOCAL_CMD=$(build_cmd_string "$LOCAL_ENV $LOCAL_BIN_SOURCE" "$COMMON_ARGS" "$LOCAL_CONFIG_ARG" "$LOCAL_ARGS")
+echo "[REMOTE CMD] $REMOTE_CMD"
+echo "[LOCAL CMD]  $LOCAL_CMD"
 LOG_CMD="$LOG_WATCH_CMD"
 
 terminal_available=true
-if ! command -v "$TERMINAL_CMD" >/dev/null 2>&1; then
+if [[ -z "$TERMINAL_CMD" ]] || ! command -v "$TERMINAL_CMD" >/dev/null 2>&1; then
     echo "[WARN] Terminal program $TERMINAL_CMD not found; falling back to current shell" >&2
     terminal_available=false
 fi
+
+if ! $terminal_available && [[ "${ENABLE_SSH_SHELL:-true}" == "true" ]]; then
+    # Disable the interactive SSH shell in headless mode unless explicitly requested.
+    ENABLE_SSH_SHELL=false
+fi
+
+declare -A HEADLESS_PIDS=()
 
 launch_window() {
     local title="$1"
@@ -187,14 +308,17 @@ launch_window() {
         printf '[TERM] Opening %s window\n' "$title"
         "$TERMINAL_CMD" --title "$title" -- bash -lc "$cmd; exec bash" &
     else
-        printf '[TERM] %s command (fallback): %s\n' "$title" "$cmd"
-        bash -lc "$cmd; exec bash"
+        printf '[HEADLESS] %s command: %s\n' "$title" "$cmd"
+        bash -lc "$cmd" &
+        HEADLESS_PIDS["$title"]=$!
     fi
 }
 
 # Terminal #1: persistent SSH shell for manual diagnostics/log inspection.
 SSH_SHELL_CMD=${SSH_SHELL_CMD:-"ssh $remote_target"}
-launch_window "SSH" "$SSH_SHELL_CMD"
+if [[ "$ENABLE_SSH_SHELL" == "true" ]]; then
+    launch_window "SSH" "$SSH_SHELL_CMD"
+fi
 
 REMOTE_LAUNCH_DELAY=${REMOTE_LAUNCH_DELAY:-1.0}
 printf -v remote_launch 'ssh %s %q' "$remote_target" "sleep $REMOTE_LAUNCH_DELAY; $REMOTE_CMD"
@@ -207,4 +331,12 @@ if [[ "$ENABLE_LOG_PANE" == "true" ]]; then
     launch_window "Logs" "$log_launch"
 fi
 
-printf '[TERM] Terminals launched. Watch for windows named SSH/Remote/Local/Logs (if enabled).'
+if $terminal_available; then
+    printf '[TERM] Terminals launched. Watch for windows named SSH/Remote/Local/Logs (if enabled).'
+else
+    printf '\n[HEADLESS] Background processes:'
+    for title in "${!HEADLESS_PIDS[@]}"; do
+        printf '\n  - %s (pid %s)' "$title" "${HEADLESS_PIDS[$title]}"
+    done
+    printf '\n[HEADLESS] Use ps/ssh to monitor the runs.\n'
+fi

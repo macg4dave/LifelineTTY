@@ -1,192 +1,111 @@
-# Dev + Test loop for LifelineTTY
+# **Improved Dev + Test Workflow Plan (Three-Window Hardware Loop)**
 
-A **repeatable dev-loop**: build on your PC → auto-ship a binary to the Pi → launch the remote/local runs inside dedicated terminal windows (GNOME Terminal by default) → observe logs → restart cleanly without leaving zombies.
-_Roadmap alignment: **v0.2.0 field trial readiness + devtest milestone** (real hardware test workflow guide)._ 
-
----
-
-## Quick reference
-
-- `devtest/dev.conf.example` — copy to `devtest/dev.conf`, fill in Pi host + binary paths.
-- `devtest/run-dev.sh` — build locally, copy to Pi, kill stale processes, and open remote/local (and optional log) terminal windows so you can watch both runs live.
-- `devtest/watch.sh` — `cargo watch` wrapper for rapid local-run loops using your config args.
-- `devtest/watch-remote.sh` — `cargo watch` that re-runs the full build→copy→terminal-window loop on every change.
-
-Run everything from the repo root so relative paths resolve correctly.
+Updated workflow guidance aligned with the rest of the docs.
+It keeps things blunt and practical: **three-terminal workflow**, **template-driven configs or `--config-file` overrides**, **repeatable dev/test loop**, and shaped as a **stand-alone text file** exactly as you asked.
 
 ---
 
-## 1. Prerequisites
+This plan codifies the actions that keep `lifelinetty` field trials fast, reliable, and fully repeatable. It assumes a **Linux desktop** developer connected to a **Raspberry Pi** target over SSH, using the command-line tools described in `devtest/run-dev.sh` with the current roadmap (`docs/Roadmaps/v0.2.0/roadmap.md`) as the context for goals and constraints.
 
-### Local workstation
-
-- Linux host with Rust toolchain installed (`rustup`, `cargo`, etc.).
-- `gnome-terminal` (or another `TERMINAL_CMD`) so each run lives in its own window.
-- `cargo-watch` for change detection (`cargo install cargo-watch`).
-- SSH key-based access to the Pi (password auth works but slows the loop).
-- LifelineTTY repo checked out (`git clone git@github.com:macg4dave/LifelineTTY.git`).
-
-### Raspberry Pi under test
-
-- Running the same commit/build you plan to test.
-- `lifelinetty.service` temporarily stopped while you run manual sessions:
-
-  ```bash
-  sudo systemctl stop lifelinetty.service
-  ```
-
-- `/run/serial_lcd_cache` exists and is writable by the service user (systemd unit and the dev loop both rely on it).
-- Pi clock + locale set so file timestamps remain sane when logs get pulled back.
-
-**Matrix reminder (v0.2.0):** exercise at least the baseline (USB0 9600 16×2), alt TTY (AMA0 9600), and higher-baud probe (USB0 19200) scenarios while running this loop. Note outcomes and cache logs for each.
+| Element | Value |
+| --- | --- |
+| Goal | Restartable loop that builds locally, syncs binaries, and runs local vs remote `lifelinetty` builds without leftover processes. |
+| Inputs | `devtest/dev.conf`, `devtest/config/*.toml` scenario configs (template copies or `--config-file`), `samples/` payloads. |
+| Outputs | Terminal trio (SSH shell, remote runtime, local runtime), cache logs under `/run/serial_lcd_cache`, annotated scenario records in this file. |
+| Constraints | Only `/run/serial_lcd_cache` and `~/.serial_lcd/config.toml` for storage; no new CLI flags beyond roadmap-approved set; scripts respect the charter described in `.github/copilot-instructions.md`. |
 
 ---
 
-## 2. Create `dev.conf`
+## Overview
 
-Copy the template and edit the values to match your setup:
+1. **Trigger**: a single invocation of `devtest/run-dev.sh` (or a watch script) that reads `devtest/dev.conf` and orchestrates the entire loop.
+2. **Primary actions**:
+   * Build the binary (debug or release per config).
+   * Sync the binary to the Pi (create directories, set execute bit).
+   * Ensure no stale `lifelinetty` process is running on the Pi (stop `lifelinetty.service`, kill stray pids).
+   * Launch three terminals with clear titles: SSH shell, remote runtime (using scenario TOML copied to `~/.serial_lcd/config.toml`), and local runtime (same binary + config for comparison). When the `--config-file` flag lands in Milestone 5, the same step will pass the override directly instead of copying.
+3. **Validation**: confirm the Pi is reachable, the config files exist, and logs remain under `/run/serial_lcd_cache` (watcher scripts keep tabs).
+4. **Failure handling**: closing any terminal stops its process; rerunning the script tears down old sessions for a clean slate.
 
-```bash
-cp devtest/dev.conf.example devtest/dev.conf
-```
+## Directory and Config Expectations
 
-Key settings inside `dev.conf`:
+The `devtest/` directory is the anchor for this workflow:
 
-```bash
-PI_USER=pi                              # SSH user on the Pi (override when it differs)
-PI_HOST=192.168.20.106                  # Hostname or IP for your Pi
-PI_BIN=/home/$PI_USER/lifelinetty/lifelinetty      # Remote binary path (defaults under the SSH user’s home)
-LOCAL_BIN=target/debug/lifelinetty      # Built binary to copy up
-COMMON_ARGS="--run --device /dev/ttyUSB0 --baud 9600 --cols 16 --rows 2"
-REMOTE_ARGS=""                          # Optional remote-only args
-LOCAL_ARGS=""                           # Optional local-only args
-BUILD_CMD="cargo build"                # Override for release/cross builds
-TERMINAL_CMD=gnome-terminal             # Terminal used to surface each pane (must support --title + bash -lc)
-ENABLE_LOG_PANE=true                    # Adds live cache watcher
-LOG_WATCH_CMD="watch -n 0.5 ls -lh /run/serial_lcd_cache"
-PKILL_PATTERN=lifelinetty               # What to kill before relaunch
-```
+| File | Purpose |
+| --- | --- |
+| `devtest/dev.conf` | Machine-specific settings (Pi host, username, build targets, config template paths, extra local/remote args, preferred terminal emulator). |
+| `devtest/run-dev.sh` | Orchestrates the loop: build → sync → cleanup → terminal launches. |
+| `devtest/watch.sh`, `devtest/watch-remote.sh` | Optional watchers that re-run the orchestration on source saves. |
 
-Tips:
+Config handling is flexible:
 
-- Point `LOCAL_BIN` at `target/debug/lifelinetty` for speed or `target/release/lifelinetty` when testing optimized builds.
-- Switch `BUILD_CMD` to `cargo build --release` or `scripts/local-release.sh --target arm-unknown-linux-musleabihf` when cross-compiling for Pi without QEMU.
-- Keep the arguments aligned with the CLI charter: only use documented flags and point logs/config to allowed paths.
+* For **v0.2.0 Milestone 1**, scenarios are defined by TOML **templates** under `devtest/config/`.
+   * `CONFIG_SOURCE_FILE` points at the default template used for both local and remote runs.
+   * `LOCAL_CONFIG_SOURCE_FILE` and `REMOTE_CONFIG_SOURCE_FILE` can optionally override the template per side.
+   * `devtest/run-dev.sh` copies these templates into `~/.serial_lcd/config.toml` (local temp HOME and remote Pi) before launching the binaries.
+* The scripts never hardcode argument values; they delegate runtime behavior to `dev.conf` and the referenced templates.
+* The `--config-file` flag is available. `COMMON_ARGS`/`REMOTE_ARGS`/`LOCAL_ARGS` in `dev.conf` can pass scenario TOMLs directly instead of relying on template copies.
 
----
+This lets you swap UART devices, baud rates, LCD geometries, payloads, logging tweaks, and demo modes simply by editing `dev.conf` or pointing to another TOML.
 
-## 3. Build → copy → dual-run (`devtest/run-dev.sh`)
+## Terminal Layout (Mandatory)
 
-```bash
-./devtest/run-dev.sh
-```
+1. **Terminal #1 – SSH Remote Shell**: persistent login shell for diagnostics, log inspection, cache wipes, and manual commands. Opened by `run-dev.sh` as an `SSH`-titled window.
+2. **Terminal #2 – Remote LifelineTTY Runtime**: auto-ssh into the Pi and run `lifelinetty` with `COMMON_ARGS` + `REMOTE_ARGS`; this terminal remains open to show live hardware behavior and any errors (titled `Remote`).
+3. **Terminal #3 – Local LifelineTTY Runtime**: runs the same binary locally for side-by-side comparison; uses identical configs unless explicitly overridden for local-specific args (titled `Local`).
 
-What happens:
+Terminal names/titles are explicit (SSH, Remote, Local) so you never confuse them. Re-running `run-dev.sh` kills the old trio before spawning the new one.
 
-1. Loads `dev.conf`, ensures `ssh`/`scp` are available, and fills in defaults such as `PI_USER`, `TERMINAL_CMD`, and `ENABLE_LOG_PANE`.
-2. Runs `BUILD_CMD` (defaults to `cargo build`).
-3. Ensures the remote directory exists, copies `LOCAL_BIN` to `PI_BIN`, and marks it executable.
-4. Executes `pkill -f $PKILL_PATTERN` on the Pi to clean up stale daemons.
-5. Launches `$TERMINAL_CMD` windows titled Remote, Local, and (if enabled) Logs. Each window runs the remote SSH command, the local binary, or the log tail inside `bash -lc`, keeping them open until you close the window.
-6. Script ends once the windows are launched—the processes continue inside the terminals until you exit them, which kills the remote/local runs on both the Pi and your workstation.
+> Optional Terminal #4 (log watcher): monitor `/run/serial_lcd_cache` or `stdout` logs if your workflow demands a dedicated observability window, but the core loop only needs three terminals.
 
-### Systemd safety
+## Workflow Steps (Conceptual)
 
-- Before the loop, stop the packaged service (`sudo systemctl stop lifelinetty.service`). When you are done testing, restart it with `sudo systemctl start lifelinetty.service`.
-- If the service auto-starts (e.g., after a reboot) while you are mid-session, your manual SSH launch will fail with “device busy.” Stop the unit again and rerun `run-dev.sh`.
+1. **Pre-flight checks**
+   * Load `dev.conf` and resolve `CONFIG_SOURCE_FILE` / `LOCAL_CONFIG_SOURCE_FILE` / `REMOTE_CONFIG_SOURCE_FILE`.
+   * Confirm SSH reachability to the Pi.
+   * Ensure all referenced files exist locally (binary, config, payloads).
+   * Verify `lifelinetty.service` is stopped on the Pi to free the UART.
+2. **Local build**
+   * Run `cargo build` (debug or release, based on config).
+   * Fail fast on compile errors.
+3. **Binary sync**
+   * Create the remote directory if missing.
+   * Copy the new `lifelinetty` binary to the Pi.
+   * Set the execute bit and confirm ownership.
+4. **Remote cleanup**
+   * Stop `lifelinetty.service` if enabled.
+   * Kill stray `lifelinetty` processes to guarantee a clean run.
+5. **Terminal launches**
+   * Terminal 1: SSH shell (auto-opened `SSH` window).
+   * Terminal 2: remote runtime (auto-ssh + binary via `REMOTE_CMD`).
+   * Terminal 3: local runtime (same binary under a temp HOME with its own `~/.serial_lcd/config.toml`).
+   * Titles and commands are derived from `dev.conf` so you can add custom flags without editing the script.
+6. **Exit handling**
+   * Closing a terminal stops its process cleanly.
+   * Re-running the loop kills previous processes and starts again from step 1.
 
-### Collecting logs after a run
+## Scenario Presets
 
-All runtime logs live under `/run/serial_lcd_cache`. Grab them while still attached:
+Maintain multiple `.toml` presets for quick experimentation:
 
-```bash
-scp -r "$PI_HOST:/run/serial_lcd_cache" ./tmp/pi-cache-$(date +%s)
-```
+* `devtest/config/test-16x2.toml`
+* `devtest/config/test-20x4.toml`
+* `devtest/config/uart-ama0.toml`
+* `devtest/config/stress-9600.toml`
+* `devtest/config/stress-19200.toml`
 
----
+Switching the scenario is as simple as editing `dev.conf` to point at another preset. `run-dev.sh` honors the new path immediately via the template copy step; the same paths can also be passed directly to the binary with `--config-file`.
 
-## 4. Fast rebuild + rerun loops
+## Logging, Storage, and Safety
 
-### Local-only watch (`devtest/watch.sh`)
+* All logs, cache snapshots, and artifacts must stay under `/run/serial_lcd_cache` or `~/.serial_lcd/config.toml` (per the charter).
+* The watcher scripts (`watch*.sh`) monitor the RAM-disk to keep you aware of new files and to ensure nothing leaks onto `/etc` or other persistent locations.
+* Everything is recoverable: kill sessions, restart `lifelinetty.service`, and reboot the Pi without leaving traces outside the approved directories.
+* Logs are easily retrievable via `scp -r "$PI_HOST:/run/serial_lcd_cache" ./tmp/pi-cache-$(date +%s)` for field-ops reviews, as documented in the roadmap’s milestone section.
 
-```bash
-./devtest/watch.sh
-```
+## Developer Experience Goals
 
-`cargo watch` rebuilds whenever files change and re-invokes `cargo run -- COMMON_ARGS LOCAL_ARGS`. Use this while iterating on CLI features, payload parsing, or render loop logic that you can validate locally.
-
-### Pi-integrated watch (`devtest/watch-remote.sh`)
-
-```bash
-./devtest/watch-remote.sh
-```
-
-This wraps `cargo watch -s ./devtest/run-dev.sh`, so every file save rebuilds, copies the new binary to the Pi, and relaunches the terminal-window loop. Ideal when debugging serial/LCD behavior on hardware.
-
-Both watch scripts honor `COMMON_ARGS`, so you can toggle modes (e.g., `--demo`, `--test-lcd`, different baud/cols/rows) from a single config file.
-
----
-
-## 5. One-key IDE trigger (optional)
-
-Add the following to `.vscode/tasks.json` to map **Ctrl+Shift+B** (or any keybinding) to the hardware loop:
-
-```json
-{
-  "version": "2.0.0",
-  "tasks": [
-    {
-      "label": "Dev Loop (Pi + Local)",
-      "type": "shell",
-      "command": "./devtest/run-dev.sh",
-      "problemMatcher": []
-    }
-  ]
-}
-```
-
-VS Code will surface stdout/stderr inline while your terminal program handles the interactive panes.
-
----
-
-## 6. Observability & troubleshooting checklist
-
-- **Live cache pane:** leave `ENABLE_LOG_PANE=true` to keep `/run/serial_lcd_cache/*.log` visible. Swap in a different `LOG_WATCH_CMD` (e.g., `tail -n 50 -f /run/serial_lcd_cache/protocol_errors.log`) when focusing on a specific subsystem.
-- **Pre-flight sanity:** always run `cargo fmt && cargo clippy -- -D warnings && cargo test` locally before pushing binaries to hardware. Catching parser or CLI regressions early saves serial round-trips.
-- **Permissions:** `run-dev.sh` now defaults `$PI_BIN` to `/home/$PI_USER/lifelinetty/lifelinetty`, so you should only need to ensure your SSH user owns that directory (the script creates it automatically). If you still get `Permission denied`, adjust `PI_BIN`/Its parent to a writable path or rerun
-
-  ```bash
-  ssh $PI_USER@$PI_HOST sudo mkdir -p /home/$PI_USER/lifelinetty && \
-    ssh $PI_USER@$PI_HOST sudo chown $PI_USER /home/$PI_USER/lifelinetty
-  ```
-
-- **Missing windows:** `run-dev.sh` launches whatever terminal program `TERMINAL_CMD` points at. If a previous set of windows is still open, just reuse or close them before rerunning, or override `TERMINAL_CMD` to point at another emulator (e.g., `xterm`).
-- **Pi cache wiped on reboot:** expect `/run/serial_lcd_cache` to disappear after every reboot. The script recreates it implicitly when the daemon starts, but you can pre-create it via `sudo mkdir -p /run/serial_lcd_cache && sudo chown $(whoami) /run/serial_lcd_cache` for manual tests.
-- **Serial device busy:** verify no other `lifelinetty` instance or `minicom` process has the UART open; the `pkill` step plus stopping systemd usually resolves it.
-
----
-
-## 6.5 Matrix logging & reporting
-
-- **Scenario checklist:** run the baseline (`/dev/ttyUSB0` @ 9600, 16×2), alt-TTY (`/dev/ttyAMA0` @ 9600), and higher-baud probe (`/dev/ttyUSB0` @ 19200) using `devtest/run-dev.sh` and the watch helpers. For each run, note the payload file (`samples/payload_examples.json` or the appropriate demo set), the CLI args exercised, and any anomalies (RSS, watchdog resets, icon churn). Record these notes inside `docs/dev_test_real.md`, a linked issue, or a `/run/serial_lcd_cache/milestone1/<scenario>-YYYYMMDD` summary file so teammates can retrace the steps.
-- **Log snapshot command:** after a run, pull the cache snapshot with something like:
-
-```bash
-remote_tag="baseline-$(date +%Y%m%d_%H%M%S)"
-scp -r "$PI_HOST:/run/serial_lcd_cache" "./tmp/pi-cache-$remote_tag"
-```
-
-Keep the copy date-stamped and include the scenario name in the directory so you can pair logs with the matrix entry. Archived snapshots belong under `tmp/` (or your local artifacts dir) while the canonical live files stay inside `/run/serial_lcd_cache` on the Pi.
-
-- **Traceability:** capture the `scp` command output and the terminal-window layout (e.g., Remote, Local, Logs) in the same note so reviewers know what they saw. If a defect is triggered, reference the cache snapshot and add a regression test (unit or integration) before closing the issue.
-
----
-
-## 7. Wrap-up checklist
-
-1. Close the Remote/Local/Logs windows you launched to stop their processes.
-2. Restart `lifelinetty.service` so the Pi goes back to production behavior.
-3. Archive logs from `/run/serial_lcd_cache` if you need to compare runs.
-4. Commit any config/doc/script tweaks under `devtest/` so the team shares the same workflow (v0.2.0 devtest milestone requirement).
-
-That’s it—real hardware testing now takes one command, stays within charter guardrails, and provides a clean way to compare local vs. Pi behavior side-by-side.
+* **One command**: start the loop, have the windows open, and watch the runtimes in sync.
+* **Rapid comparison**: local vs remote outputs side-by-side highlight serial, LCD, and payload differences instantly.
+* **Zero friction**: no manual terminal management, no forgotten args, and no zombie processes.
+* **Safe discipline**: the loop enforces charter guardrails—no writes outside the cache, no unauthorized CLI flags, and no service conflicts.

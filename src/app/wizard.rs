@@ -16,9 +16,13 @@ use std::{
 
 /// Trigger the guided wizard on first run or when explicitly requested.
 pub fn maybe_run(opts: &RunOptions) -> Result<()> {
+    let forced_env = std::env::var_os("LIFELINETTY_FORCE_WIZARD").is_some();
+    if opts.config_file.is_some() && !opts.wizard && !forced_env {
+        return Ok(());
+    }
+
     let config_path = loader::default_config_path()?;
     let config_exists = config_path.exists();
-    let forced_env = std::env::var_os("LIFELINETTY_FORCE_WIZARD").is_some();
     let should_run = opts.wizard || forced_env || !config_exists;
     if !should_run {
         return Ok(());

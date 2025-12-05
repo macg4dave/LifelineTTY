@@ -389,6 +389,7 @@ Need a quick, scriptable override without editing the config? Set `LIFELINETTY_D
 | `--pcf8574-addr <auto\|0xNN>` | I²C address for the PCF8574 backpack or `auto` to probe the common range. | `auto` (tries `0x27`, `0x26`, … ). |
 | `--log-level <error\|warn\|info\|debug\|trace>` | Verbosity for stderr/file logs. | `info` (also configurable via `LIFELINETTY_LOG_LEVEL`). |
 | `--log-file <path>` | Append logs to a file inside `/run/serial_lcd_cache` (also honors `LIFELINETTY_LOG_PATH`). | No file logging unless you provide a cache-rooted path. |
+| `--config-file <path>` | Load configuration from the provided TOML instead of `~/.serial_lcd/config.toml` (env overrides and CLI flags still apply). | Highest-priority read source; persistent writes remain bound to `~/.serial_lcd/config.toml`. |
 | `--polling` | Force-enable the hardware polling overlay even if the config disables it. | Defaults to the config value (`polling_enabled`). |
 | `--no-polling` | Disable polling even when the config enables it. | Handy for smoke tests if you want to suppress the overlay/logging. |
 | `--poll-interval-ms <number>` | Interval between poll snapshots. | `5000` ms (must stay within 1000–60000 ms). |

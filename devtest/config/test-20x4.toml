@@ -1,0 +1,37 @@
+# 20x4 LCD template for wider display hardware.
+# Keep baud at 9600 unless hardware is validated for higher speeds.
+
+device = "/dev/ttyUSB0"
+baud = 9600
+flow_control = "none"
+parity = "none"
+stop_bits = "1"
+dtr_on_open = "auto"
+serial_timeout_ms = 500
+cols = 20
+rows = 4
+lcd_present = true
+scroll_speed_ms = 200
+page_timeout_ms = 3500
+polling_enabled = false
+poll_interval_ms = 5000
+button_gpio_pin = "null"
+pcf8574_addr = "auto"
+display_driver = "auto"
+backoff_initial_ms = 500
+backoff_max_ms = 10000
+
+[protocol]
+schema_version = 1
+compression = { enabled = false, codec = "lz4" }
+
+[watchdog]
+serial_timeout_ms = 12000
+tunnel_timeout_ms = 5000
+
+[negotiation]
+node_id = 1
+preference = "no_preference"
+timeout_ms = 1000
+
+command_allowlist = []

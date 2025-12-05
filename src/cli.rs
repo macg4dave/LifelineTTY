@@ -39,6 +39,7 @@ pub struct RunOptions {
     pub pcf8574_addr: Option<Pcf8574Addr>,
     pub log_level: Option<String>,
     pub log_file: Option<String>,
+    pub config_file: Option<String>,
     pub compression_enabled: Option<bool>,
     pub compression_codec: Option<CompressionCodec>,
     pub demo: bool,
@@ -83,7 +84,11 @@ impl Command {
     }
     pub fn help() -> String {
         let mut help = String::from(
-            "lifelinetty - Serial-to-LCD daemon\n\nUSAGE:\n  lifelinetty run [--device <path>] [--baud <number>] [--cols <number>] [--rows <number>] [--payload-file <path>]\n  lifelinetty --help\n  lifelinetty --version\n\nOPTIONS:\n  --device <path>   Serial device path (default: /dev/ttyUSB0)\n  --baud <number>   Baud rate (default: 9600)\n  --flow-control <none|software|hardware>  Flow control override (default: none)\n  --parity <none|odd|even>       Parity override (default: none)\n  --stop-bits <1|2>              Stop bits override (default: 1)\n  --dtr-on-open <auto|on|off>    Control DTR state when opening the port (default: auto)\n  --serial-timeout-ms <number>   Read timeout in milliseconds (default: 500)\n  --cols <number>   LCD columns (default: 20)\n  --rows <number>   LCD rows (default: 4)\n  --payload-file <path>  Load a local JSON payload and render it once (testing helper)\n  --backoff-initial-ms <number>  Initial reconnect backoff (default: 500)\n  --backoff-max-ms <number>      Maximum reconnect backoff (default: 10000)\n  --pcf8574-addr <auto|0xNN>     PCF8574 I2C address or 'auto' to probe (default: auto)\n  --log-level <error|warn|info|debug|trace>  Log verbosity (default: info)\n  --log-file <path>              Append logs inside /run/serial_lcd_cache (also honors LIFELINETTY_LOG_PATH)\n  --polling                      Enable hardware polling (default: config)\n  --no-polling                   Disable hardware polling even if config enables it\n  --poll-interval-ms <number>    Polling interval in milliseconds (default: 5000)\n  --compressed                   Enable schema compression (applies to schema_v1 payloads)\n  --no-compressed                Disable compression even if config enables it\n  --codec <lz4|zstd>             Codec to use when compression is enabled (default: lz4)\n  --demo                         Run built-in demo pages on the LCD (no serial input)\n",
+            "lifelinetty - Serial-to-LCD daemon\n\nUSAGE:\n  lifelinetty run [--device <path>] [--baud <number>] [--cols <number>] [--rows <number>] [--payload-file <path>]\n  lifelinetty --help\n  lifelinetty --version\n\nOPTIONS:\n  --device <path>   Serial device path (default: /dev/ttyUSB0)\n  --baud <number>   Baud rate (default: 9600)\n  --flow-control <none|software|hardware>  Flow control override (default: none)\n  --parity <none|odd|even>       Parity override (default: none)\n  --stop-bits <1|2>              Stop bits override (default: 1)\n  --dtr-on-open <auto|on|off>    Control DTR state when opening the port (default: auto)\n  --serial-timeout-ms <number>   Read timeout in milliseconds (default: 500)\n  --cols <number>   LCD columns (default: 20)\n  --rows <number>   LCD rows (default: 4)\n  --payload-file <path>  Load a local JSON payload and render it once (testing helper)\n  --backoff-initial-ms <number>  Initial reconnect backoff (default: 500)\n  --backoff-max-ms <number>      Maximum reconnect backoff (default: 10000)\n  --pcf8574-addr <auto|0xNN>     PCF8574 I2C address or 'auto' to probe (default: auto)\n  --log-level <error|warn|info|debug|trace>  Log verbosity (default: info)\n  --log-file <path>              Append logs inside /run/serial_lcd_cache (also honors LIFELINETTY_LOG_PATH)\n",
+        );
+
+        help.push_str(
+            "  --config-file <path>           Load config from the provided TOML instead of ~/.serial_lcd/config.toml (env overrides still apply)\n  --polling                      Enable hardware polling (default: config)\n  --no-polling                   Disable hardware polling even if config enables it\n  --poll-interval-ms <number>    Polling interval in milliseconds (default: 5000)\n  --compressed                   Enable schema compression (applies to schema_v1 payloads)\n  --no-compressed                Disable compression even if config enables it\n  --codec <lz4|zstd>             Codec to use when compression is enabled (default: lz4)\n  --demo                         Run built-in demo pages on the LCD (no serial input)\n",
         );
 
         help.push_str(
@@ -180,6 +185,9 @@ fn parse_run_options(iter: &mut std::slice::Iter<String>) -> Result<RunOptions> 
             }
             "--log-file" => {
                 opts.log_file = Some(take_value(flag, iter)?);
+            }
+            "--config-file" => {
+                opts.config_file = Some(take_value(flag, iter)?);
             }
             "--polling" => {
                 opts.polling_enabled = Some(true);
@@ -306,6 +314,7 @@ mod tests {
             pcf8574_addr: Some(Pcf8574Addr::Addr(0x23)),
             log_level: Some("debug".into()),
             log_file: Some("/tmp/lifelinetty.log".into()),
+            config_file: None,
             compression_enabled: None,
             compression_codec: None,
             polling_enabled: None,
@@ -342,6 +351,7 @@ mod tests {
             pcf8574_addr: None,
             log_level: None,
             log_file: None,
+            config_file: None,
             compression_enabled: None,
             compression_codec: None,
             polling_enabled: None,
@@ -408,6 +418,18 @@ mod tests {
         let args = vec!["--help".into()];
         let cmd = Command::parse(&args).unwrap();
         assert_eq!(cmd, Command::ShowHelp);
+    }
+
+    #[test]
+    fn parse_config_file_flag_sets_path() {
+        let args = vec!["--config-file".into(), "/tmp/custom.toml".into()];
+        let cmd = Command::parse(&args).unwrap();
+        match cmd {
+            Command::Run(opts) => {
+                assert_eq!(opts.config_file.as_deref(), Some("/tmp/custom.toml"));
+            }
+            other => panic!("expected Run variant, got {other:?}"),
+        }
     }
 
     #[test]

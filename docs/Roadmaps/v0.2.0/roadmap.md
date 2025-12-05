@@ -15,7 +15,7 @@ LifelineTTY remains a single Rust daemon that ingests newline-delimited JSON via
 ### AI execution cues (read first)
 
 - **Storage**: RAM-disk only at `/run/serial_lcd_cache`; only `~/.serial_lcd/config.toml` persists. Never write elsewhere; clean up cache artifacts.
-- **CLI surface (stable)**: `--run`, `--test-lcd`, `--test-serial`, `--device`, `--baud`, `--cols`, `--rows`, `--demo`, `--serialsh`, `--wizard`. Do **not** add new flags in v0.2.0 unless explicitly granted by Milestone 5 (Flag improvements) to introduce the one-off `--config-file <path>` override whose contents become the highest-priority config source for this release. Likewise, do not remove any existing flag without prior approval.
+- **CLI surface (stable)**: `--run`, `--test-lcd`, `--test-serial`, `--device`, `--baud`, `--cols`, `--rows`, `--demo`, `--serialsh`, `--wizard`, `--config-file`. The `--config-file <path>` override is the highest-priority config source; no additional flags are allowed without explicit approval.
 - **Protocols/transports**: UART newline JSON or `key=value`; HD44780 + PCF8574 @ 0x27 only; no sockets/BLE/HTTP/PTYs.
 - **Allowed crates**: std + charter whitelist (hd44780-driver, linux-embedded-hal, rppal, serialport, tokio-serial async, tokio for async serial, serde/serde_json, crc32fast, ctrlc, anyhow/thiserror, log/tracing, calloop, async-io, syslog-rs, os_info, crossbeam, rustix, sysinfo, futures, directories, humantime, serde_bytes, bincode, clap_complete, indicatif, tokio-util). New crates must be added to `docs/lifelinetty_creates.md` and stay within the whitelist.
 - **Quality bar**: `cargo fmt`, `cargo clippy -- -D warnings`, `cargo test` on x86_64 + ARMv6; no `unsafe`, no unchecked `unwrap()` in production paths; keep RSS <5 MB and avoid busy loops.
@@ -135,14 +135,15 @@ Record outcomes and defects in RAM-disk logs; reproduce with tests before closin
 
 ---
 
-### Milestone 1 — Real-hardware devtest loop (--In progress)
+### Milestone 1 — Docker-to-docker devtest loop (--In progress)
 
-- **Goal:** Ship a repeatable SSH-based `/devtest` loop for Pi 1 field trials (no new transports/flags) that exercises the v0.2.0 real-world matrix without leaving processes or logs outside `/run/serial_lcd_cache`.
-- **Implementation:** `devtest/run-dev.sh`, `devtest/watch.sh`, and `devtest/watch-remote.sh` run end-to-end with `devtest/dev.conf` (USB0 + S0 @ 9600; USB0 @ 19200; 16×2). Scripts keep cache log watching inside `/run/serial_lcd_cache` and rely solely on SSH/scp/tmux.
-- **Logging & storage:** `docs/dev_test_real.md` documents cache/log collection and matrix checklist with v0.2.0 wording; `devtest/dev.conf.example` defaults stay within charter (9600 baud, `/dev/ttyUSB0`, cache watcher) and remind testers to stop `lifelinetty.service` before runs.
-- **Docs/tests:** Roadmap/workstreams point to the guide; matrix runs record outcomes, and defects uncovered during the loop land with reproducible notes or tests before closing the milestone.
-- **Status & tracking (04 Dec 2025):** Kickoff is active; every scenario run should leave a dated snapshot under `/run/serial_lcd_cache/milestone1/<scenario>-YYYYMMDD` and be retrieved via `scp -r "$PI_HOST:/run/serial_lcd_cache" ./tmp/pi-cache-$(date +%s)` so the field-ops owner can replay the logs and note RSS/timings. Annotate each replay in `docs/dev_test_real.md` (or linked issue) along with the `samples/` payload set used.
-- **Next actions:** Continue cycling baseline, alt-TTY, and higher-baud probes with `devtest/run-dev.sh` and the watch helpers; capture their logs, list any observed defects, and wire them into regression tests (`tests/bin_smoke.rs`, `tests/integration_mock.rs`, etc.) before marking the milestone complete.
+> Detailed playbook: see `docs/Roadmaps/v0.2.0/milestone_1.md` (Docker run + compose recipes, CI/headless flow, test matrix, AI rerun checklist).
+
+- **Goal:** Make the Docker-to-docker auto loop the primary devtest path so CI/hardware-free runs can exercise the full three-terminal workflow with zero drift, confining all artifacts to `/run/serial_lcd_cache` and `~/.serial_lcd` inside each container.
+- **Implementation:** Run paired containers: one acts as the “local” runner and one as the “remote” target with an SSH daemon. Mount `/run/serial_lcd_cache` (tmpfs or bind) into both. From the local container (or host), invoke `devtest/run-dev.sh` with `PI_HOST=<remote-container-name>`, `PI_USER` set to the remote SSH user (often `root`), and `PI_BIN` pointing to the remote binary path (e.g., `/opt/lifelinetty/lifelinetty`). Optionally set `LOCAL_BIN_SOURCE`/`REMOTE_BIN_SOURCE` to prebuilt artifacts. The script builds (per `dev.conf`), scps configs and binaries, kills stale processes, and launches the local and remote runs under separate terminals or shells.
+- **Required steps:** Pre-flight checks (SSH reachability, config templates present, remote service off), local build, binary sync + chmod, remote cleanup, then window launches for (1) persistent SSH shell, (2) remote run, (3) local comparison run. Config paths remain flexible (`--config-file` honored) so you can vary TTY (`/dev/ttyUSB0`, `/dev/ttyS0`), baud presets, LCD geometries, demos, and logging tweaks without editing the scripts. For hardware trials, the same flow still applies against Pi hosts.
+- **Logging & storage:** Keep watcher active on `/run/serial_lcd_cache`. Logs, cache snapshots, and terminal outputs stay under that RAM-disk—never `/etc` or other persistent paths. `docs/dev_test_real.md` remains the workflow reference and checklist; `devtest/dev.conf.example` keeps defaults charter-compliant (9600 on `/dev/ttyUSB0`, cache watcher, service reminder).
+- **Docs/tests:** Capture every matrix scenario (baseline, alt-TTY, higher baud, etc.) under `/run/serial_lcd_cache/milestone1/<scenario>-YYYYMMDD`, copy them via `docker cp` or `scp` for field-ops review, and annotate the replay in `docs/dev_test_real.md` along with the payload set used. Any defects unearthed in this loop must land with regression tests (`tests/bin_smoke.rs`, `tests/integration_mock.rs`, etc.) before the milestone can be marked done.
 
 ### Milestone 2 — Enhanced first-run wizard (--Planned)
 
@@ -171,13 +172,10 @@ Record outcomes and defects in RAM-disk logs; reproduce with tests before closin
 - **Logging & storage:** Reinforce that all shell logs/errors go to stderr (journald when invoked under systemd units) or cache files under `/run/serial_lcd_cache/serialsh*`; do not write anywhere else. Suggest `journalctl -u lifelinetty.service` for prior daemon logs but avoid altering the unit.
 - **Docs/tests:** Update README and wizard helper snippets to clarify the systemd flow (stop service, run shell via SSH/tmux, restart). Add a brief checklist in this roadmap and ensure `tests/bin_smoke.rs` keeps covering `--serialsh` help/usage so behavior stays stable. No new tests are required for systemd itself; this milestone is documentation and ops guidance only.
 
-### Milestone 5 — Flag improvements & custom config override (--Planned)
+### Milestone 5 — Flag improvements & custom config override (**completed 4 Dec 2025**)
 
 - **Goal:** Introduce the deliberate exception to the stable CLI surface by adding `--config-file <path>` so operators can point LifelineTTY at a dedicated TOML that overrides `~/.serial_lcd/config.toml` and becomes the highest-priority configuration source, while still honoring environment overrides and per-flag tweaks layered on top.
-- **Implementation:**
-  - Accept `--config-file <path>` across `run`/implicit invocations, call `Config::load_from_path` on that path, and skip the default `~/.serial_lcd/config.toml` when the flag is present so the custom file wins conflicts (env overrides continue to apply on top).
-  - Keep all other flags untouched; explicitly forbid removing any existing flag without permission so this milestone only adds the single override and leaves the CLI surface otherwise stable.
-  - Document the new flag in the CLI help text, README reference table, and relevant docs/tests, making clear that its contents have the final say for v0.2.0.
-- **Logging & storage:** The flag only reads the provided file; persistent writes remain limited to `~/.serial_lcd/config.toml` and `/run/serial_lcd_cache`. Emphasize that the override cannot write outside the chartered paths.
-- **Docs/tests:** Cover the flag in `tests/bin_smoke.rs`/`tests/integration_mock.rs` and add a regression proving that `--config-file` wins over the default path and that environment overrides still apply. Mention the flag in `docs/dev_test_real.md` if it matters for field scripts.
+- **Status:** Delivered. The CLI accepts `--config-file` across implicit/`run` invocations, bypasses the default config path when supplied, and still applies environment overrides and per-flag tweaks on top. Help/README/devtest docs reference the flag, and regression coverage in `tests/bin_smoke.rs` and `src/app/mod.rs` confirms precedence and default config non-creation.
+- **Logging & storage:** The flag only reads the provided file; persistent writes remain limited to `~/.serial_lcd/config.toml` and `/run/serial_lcd_cache`.
+- **Docs/tests:** `tests/bin_smoke.rs` exercises env override + default skip; new unit tests in `src/app/mod.rs` assert config-file precedence and CLI override behavior. `docs/dev_test_real.md` and `devtest/dev.conf.example` describe using the flag for scenarios.
 

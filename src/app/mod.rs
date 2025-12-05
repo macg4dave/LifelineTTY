@@ -11,7 +11,7 @@ use crate::{
     serial::{DtrBehavior, FlowControlMode, ParityMode, SerialOptions, StopBitsMode},
     Result,
 };
-use std::{fs, str::FromStr, time::Instant};
+use std::{fs, path::Path, str::FromStr, time::Instant};
 
 mod connection;
 mod demo;
@@ -122,7 +122,11 @@ impl App {
 
     pub fn from_options(opts: RunOptions) -> Result<Self> {
         wizard::maybe_run(&opts)?;
-        let cfg_file = Config::load_or_default()?;
+        let cfg_file = if let Some(path) = opts.config_file.as_deref() {
+            Config::load_from_path(Path::new(path))?
+        } else {
+            Config::load_or_default()?
+        };
         let merged = AppConfig::from_sources(cfg_file, opts);
         crate::config::validate_baud(merged.baud)?;
         Self::new(merged)
@@ -217,6 +221,10 @@ impl App {
             supports_heartbeat,
             &mut negotiation_log,
         )
+    }
+
+    pub fn config(&self) -> &AppConfig {
+        &self.config
     }
 }
 
@@ -388,6 +396,56 @@ mod tests {
         let merged_default = AppConfig::from_sources(cfg_file.clone(), opts);
         assert_eq!(merged_default.polling_enabled, cfg_file.polling_enabled);
         assert_eq!(merged_default.poll_interval_ms, cfg_file.poll_interval_ms);
+    }
+
+    #[test]
+    fn config_file_overrides_default_path_when_provided() {
+        let home = set_temp_home();
+
+        // Write a default config that should be ignored once --config-file is passed.
+        let default_path = crate::config::loader::default_config_path().unwrap();
+        std::fs::create_dir_all(default_path.parent().unwrap()).unwrap();
+        let mut default_cfg = Config::default();
+        default_cfg.device = "/dev/ttyUSB0".into();
+        default_cfg.save_to_path(&default_path).unwrap();
+
+        // Create a custom config file that should take precedence.
+        let custom_path = home.join("custom-config.toml");
+        let mut custom_cfg = Config::default();
+        custom_cfg.device = "/dev/ttyS7".into();
+        custom_cfg.baud = 19_200;
+        custom_cfg.save_to_path(&custom_path).unwrap();
+
+        let mut opts = RunOptions::default();
+        opts.config_file = Some(custom_path.to_string_lossy().to_string());
+
+        let app = App::from_options(opts).unwrap();
+        assert_eq!(app.config().device, "/dev/ttyS7");
+        assert_eq!(app.config().baud, 19_200);
+
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn cli_overrides_config_file_values() {
+        let home = set_temp_home();
+
+        let custom_path = home.join("custom-config.toml");
+        let mut custom_cfg = Config::default();
+        custom_cfg.device = "/dev/ttyS3".into();
+        custom_cfg.baud = 9_600;
+        custom_cfg.save_to_path(&custom_path).unwrap();
+
+        let mut opts = RunOptions::default();
+        opts.config_file = Some(custom_path.to_string_lossy().to_string());
+        opts.device = Some("/dev/ttyS9".into());
+        opts.baud = Some(57_600);
+
+        let app = App::from_options(opts).unwrap();
+        assert_eq!(app.config().device, "/dev/ttyS9");
+        assert_eq!(app.config().baud, 57_600);
+
+        let _ = std::fs::remove_dir_all(home);
     }
 
     #[test]

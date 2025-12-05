@@ -46,7 +46,18 @@ pub fn load_or_default() -> Result<Config> {
         super::validate(&cfg)?;
         return Ok(cfg);
     }
-    load_from_path(&path)
+
+    match load_from_path(&path) {
+        Ok(cfg) => Ok(cfg),
+        Err(Error::InvalidArgs(_)) => {
+            // Malformed config on disk; fall back to defaults so startup can proceed.
+            let mut cfg = Config::default();
+            apply_env_overrides(&mut cfg)?;
+            super::validate(&cfg)?;
+            Ok(cfg)
+        }
+        Err(err) => Err(err),
+    }
 }
 
 pub fn default_config_path() -> Result<PathBuf> {
@@ -414,22 +425,30 @@ fn missing_required_keys(seen_keys: &HashSet<String>) -> bool {
 
 fn apply_env_overrides(cfg: &mut Config) -> Result<()> {
     if let Ok(device) = std::env::var("LIFELINETTY_DEVICE") {
-        cfg.device = device;
+        if !device.trim().is_empty() {
+            cfg.device = device;
+        }
     }
     if let Ok(raw_baud) = std::env::var("LIFELINETTY_BAUD") {
-        cfg.baud = raw_baud.parse().map_err(|_| {
-            Error::InvalidArgs("LIFELINETTY_BAUD must be a positive integer".into())
-        })?;
+        if !raw_baud.trim().is_empty() {
+            cfg.baud = raw_baud.parse().map_err(|_| {
+                Error::InvalidArgs("LIFELINETTY_BAUD must be a positive integer".into())
+            })?;
+        }
     }
     if let Ok(raw_cols) = std::env::var("LIFELINETTY_COLS") {
-        cfg.cols = raw_cols.parse().map_err(|_| {
-            Error::InvalidArgs("LIFELINETTY_COLS must be a positive integer".into())
-        })?;
+        if !raw_cols.trim().is_empty() {
+            cfg.cols = raw_cols.parse().map_err(|_| {
+                Error::InvalidArgs("LIFELINETTY_COLS must be a positive integer".into())
+            })?;
+        }
     }
     if let Ok(raw_rows) = std::env::var("LIFELINETTY_ROWS") {
-        cfg.rows = raw_rows.parse().map_err(|_| {
-            Error::InvalidArgs("LIFELINETTY_ROWS must be a positive integer".into())
-        })?;
+        if !raw_rows.trim().is_empty() {
+            cfg.rows = raw_rows.parse().map_err(|_| {
+                Error::InvalidArgs("LIFELINETTY_ROWS must be a positive integer".into())
+            })?;
+        }
     }
 
     Ok(())

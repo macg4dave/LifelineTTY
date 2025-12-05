@@ -130,7 +130,7 @@ fn prints_version() {
 #[test]
 fn help_lists_core_flags() {
     let help = Command::help();
-    for flag in ["--device", "--cols", "--rows", "--demo"] {
+    for flag in ["--device", "--cols", "--rows", "--demo", "--config-file"] {
         assert!(
             help.contains(flag),
             "help output missing flag {flag}: {help}"
@@ -140,6 +140,27 @@ fn help_lists_core_flags() {
     for flag in ["--serialsh", "--wizard"] {
         assert!(help.contains(flag), "help output missing {flag}: {help}");
     }
+}
+
+#[test]
+fn config_file_override_respects_env_and_skips_default() {
+    with_temp_home(|home| {
+        let custom = home.join("custom-config.toml");
+        fs::write(&custom, "device = \"/dev/ttyS2\"\nbaud = 19200\n")
+            .expect("failed to write custom config");
+        let _baud_guard = EnvVarGuard::set_str("LIFELINETTY_BAUD", "38400");
+        let mut opts = RunOptions::default();
+        opts.config_file = Some(custom.to_string_lossy().to_string());
+
+        let app = App::from_options(opts).expect("app init failed");
+        assert_eq!(app.config().device, "/dev/ttyS2");
+        assert_eq!(app.config().baud, 38_400);
+        let default_path = home.join(".serial_lcd").join("config.toml");
+        assert!(
+            !default_path.exists(),
+            "default config should not be created when --config-file is used"
+        );
+    });
 }
 
 #[test]

@@ -59,8 +59,8 @@ loop owns state, debounces identical frames, routes alerts to overlays, and comm
   depending on configuration, handles I²C retries, and exposes friendly APIs (`write_line`, `set_cursor`,
   `set_backlight`).
 - **Support services**: polling agent (`src/app/polling.rs`), command tunnel (`src/app/command_tunnel/*`),
-  compression helpers, telemetry exporters, and watchdogs. Each lives under `src/app/` or
-  `src/milestones/` and is gated behind roadmap flags.
+  compression helpers, telemetry exporters, and watchdogs. Each lives under `src/app/` and is gated
+  behind roadmap flags.
 
 ## Storage + cache boundaries
 

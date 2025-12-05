@@ -5,7 +5,6 @@ pub mod config;
 pub mod display;
 pub mod lcd;
 pub mod lcd_driver;
-pub mod milestones;
 pub mod negotiation;
 pub mod payload;
 pub mod serial;

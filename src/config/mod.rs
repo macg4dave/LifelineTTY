@@ -340,9 +340,16 @@ mod tests {
     use crate::serial::{DtrBehavior, FlowControlMode, ParityMode, StopBitsMode};
     use std::{
         fs,
+        sync::{Mutex, OnceLock},
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn lock_env() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    }
 
     fn temp_home(name: &str) -> PathBuf {
         let stamp = SystemTime::now()
@@ -362,6 +369,7 @@ mod tests {
 
     #[test]
     fn loads_default_when_missing() {
+        let _guard = lock_env();
         let path = temp_path("missing");
         let cfg = Config::load_from_path(&path).unwrap();
         assert_eq!(cfg, Config::default());
@@ -369,6 +377,7 @@ mod tests {
 
     #[test]
     fn parses_valid_config() {
+        let _guard = lock_env();
         let path = temp_path("parse");
         let contents = r#"
             device = "/dev/ttyUSB0"
@@ -407,6 +416,7 @@ mod tests {
 
     #[test]
     fn rejects_unknown_key() {
+        let _guard = lock_env();
         let path = temp_path("unknown");
         fs::write(&path, "nope = 1").unwrap();
         let err = Config::load_from_path(&path).unwrap_err();
@@ -416,6 +426,7 @@ mod tests {
 
     #[test]
     fn saves_and_loads_round_trip() {
+        let _guard = lock_env();
         let path = temp_path("roundtrip");
         let cfg = Config {
             device: "/dev/ttyS1".into(),
@@ -453,6 +464,7 @@ mod tests {
 
     #[test]
     fn load_or_default_creates_file_with_defaults() {
+        let _guard = lock_env();
         let home = temp_home("create");
         std::env::set_var("HOME", &home);
         let cfg_path = home.join(".serial_lcd").join("config.toml");

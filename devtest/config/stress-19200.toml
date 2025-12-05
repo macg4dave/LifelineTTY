@@ -1,0 +1,37 @@
+# Stress profile at 19200 baud for higher-speed UART validation.
+# Only use after hardware proves stable at baseline 9600.
+
+device = "/dev/ttyUSB0"
+baud = 19200
+flow_control = "none"
+parity = "none"
+stop_bits = "1"
+dtr_on_open = "auto"
+serial_timeout_ms = 400
+cols = 16
+rows = 2
+lcd_present = true
+scroll_speed_ms = 160
+page_timeout_ms = 2200
+polling_enabled = true
+poll_interval_ms = 1800
+button_gpio_pin = "null"
+pcf8574_addr = "auto"
+display_driver = "auto"
+backoff_initial_ms = 500
+backoff_max_ms = 10000
+
+[protocol]
+schema_version = 1
+compression = { enabled = false, codec = "lz4" }
+
+[watchdog]
+serial_timeout_ms = 12000
+tunnel_timeout_ms = 5000
+
+[negotiation]
+node_id = 1
+preference = "no_preference"
+timeout_ms = 1000
+
+command_allowlist = []

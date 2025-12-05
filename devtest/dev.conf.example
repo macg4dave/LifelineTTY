@@ -1,4 +1,4 @@
-# LifelineTTY dev loop configuration
+"# LifelineTTY dev loop configuration
 # Copy this file to dev.conf and tailor it to your environment.
 #
 # All values are shell evaluated, so keep quotes around strings
@@ -12,11 +12,22 @@ PI_HOST=192.168.20.106
 # Update it if your Pi user stores data elsewhere (or if you want a shared /opt install with manual permissions).
 PI_BIN=/home/$PI_USER/lifelinetty/lifelinetty
 
-# Path to the locally built binary that we copy up
+"# Path to the locally built binary that we copy up
+# Optional: set REMOTE_ARCH to pick a prebuilt release binary under releases/debug/<arch>/lifelinetty
+# (e.g., REMOTE_ARCH=armv6, armv7, arm64, x86). Overrides LOCAL_BIN for the remote copy only.
+# Optional: set LOCAL_ARCH similarly to run the local window from a release artifact instead of target/debug.
 LOCAL_BIN=target/debug/lifelinetty
+# REMOTE_ARCH=
+# LOCAL_ARCH=
 
 # Arguments passed to BOTH the remote and local binaries.
 # Stick to charter defaults (USB0 @ 9600 8N1) unless you intentionally probe another port/baud.
+#
+# The binary now supports --config-file; add it here to point at a scenario TOML directly, e.g.:
+#   COMMON_ARGS="--run --config-file devtest/config/test-16x2.toml --device /dev/ttyUSB0 --baud 9600 --cols 16 --rows 2"
+# The dev loop still supports template copies to ~/.serial_lcd/config.toml; switch scenarios by
+# pointing CONFIG_SOURCE_FILE/LOCAL_CONFIG_SOURCE_FILE/REMOTE_CONFIG_SOURCE_FILE at templates
+# under devtest/config/.
 COMMON_ARGS="--run --device /dev/ttyUSB0 --baud 9600 --cols 16 --rows 2"
 
 # You can optionally add args that only apply to the remote or local
@@ -28,14 +39,39 @@ LOCAL_ARGS=""
 # prefer release builds or cross compilation.
 BUILD_CMD="cargo build"
 
-# Terminal program used to open remote/local/log windows (needs to support --title and -- bash -lc).
+"# Terminal program used to open SSH/remote/local/log windows (needs to support --title and -- bash -lc).
 TERMINAL_CMD=gnome-terminal
 
-# Enable log watcher windows that tail /run/serial_lcd_cache on the Pi.
+"# Enable log watcher windows that tail /run/serial_lcd_cache on the Pi.
 # Keep watchers inside CACHE_DIR to respect the storage policy and record per-scenario snapshots (e.g., /run/serial_lcd_cache/milestone1/baseline).
 ENABLE_LOG_PANE=true
 LOG_WATCH_CMD="watch -n 0.5 ls -lh /run/serial_lcd_cache"
 
-# Pattern used to kill any stale remote processes before launching.
+"# Pattern used to kill any stale remote processes before launching.
 # Stop lifelinetty.service on the Pi before running this loop to avoid device contention.
 PKILL_PATTERN=lifelinetty
+
+# Config template paths used by devtest/run-dev.sh. By default, separate
+# folders exist for local and remote configs. You can still point each side at
+# any TOML you prefer.
+#
+# Available templates under devtest/config/:
+#   - local/default.toml     (baseline local)
+#   - remote/default.toml    (baseline remote)
+#   - lifelinetty.toml       (shared baseline)
+#   - test-16x2.toml         (baseline 16x2)
+#   - test-20x4.toml         (20x4 LCD geometry)
+#   - uart-ama0.toml         (Pi onboard UART)
+#   - stress-9600.toml       (baseline baud + polling enabled)
+#   - stress-19200.toml      (higher baud validation)
+#
+#   CONFIG_SOURCE_FILE=devtest/config/local/default.toml
+#   # LOCAL_CONFIG_SOURCE_FILE=devtest/config/test-16x2.toml
+#   # REMOTE_CONFIG_SOURCE_FILE=devtest/config/remote/default.toml
+#
+# For Milestone 1, these templates are copied to ~/.serial_lcd/config.toml
+# on each side before launch. You can also pass scenario TOMLs via --config-file
+# in COMMON_ARGS/REMOTE_ARGS/LOCAL_ARGS if you prefer.
+CONFIG_SOURCE_FILE=devtest/config/local/default.toml
+# LOCAL_CONFIG_SOURCE_FILE=devtest/config/local/default.toml
+# REMOTE_CONFIG_SOURCE_FILE=devtest/config/remote/default.toml

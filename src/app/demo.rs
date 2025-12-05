@@ -8,6 +8,7 @@ use crate::{
     payload::{Defaults as PayloadDefaults, RenderFrame},
     Error, Result,
 };
+use serde_json::Value;
 use std::{
     thread,
     time::{Duration, Instant},
@@ -50,7 +51,8 @@ pub fn run_demo(lcd: &mut Lcd, config: &mut AppConfig, logger: &Logger) -> Resul
         scroll_speed_ms: config.scroll_speed_ms,
         page_timeout_ms: config.page_timeout_ms,
     };
-    let frames = build_demo_frames(defaults)?;
+    let max_line_chars = usize::from(lcd.cols()).max(1);
+    let frames = build_demo_frames(defaults, max_line_chars)?;
     logger.info(format!(
         "demo: cycling {} frames (ctrl-c to exit)",
         frames.len()
@@ -184,13 +186,77 @@ fn log_demo_icon_fallbacks(logger: &Logger, palette: Option<IconPalette>) {
     ));
 }
 
-fn build_demo_frames(defaults: PayloadDefaults) -> Result<Vec<RenderFrame>> {
+fn build_demo_frames(defaults: PayloadDefaults, max_cols: usize) -> Result<Vec<RenderFrame>> {
     let mut frames = Vec::with_capacity(DEMO_PAYLOADS.len());
     for raw in DEMO_PAYLOADS {
-        match RenderFrame::from_payload_json_with_defaults(raw, defaults) {
+        let adjusted = clamp_demo_payload(raw, max_cols)?;
+        match RenderFrame::from_payload_json_with_defaults(&adjusted, defaults) {
             Ok(frame) => frames.push(frame),
             Err(err) => return Err(Error::Parse(format!("demo payload invalid: {err}"))),
         }
     }
     Ok(frames)
+}
+
+fn clamp_demo_payload(raw: &str, max_cols: usize) -> Result<String> {
+    let limit = max_cols.clamp(1, 40);
+    let mut value: Value = serde_json::from_str(raw)
+        .map_err(|e| Error::Parse(format!("demo payload invalid: {e}")))?;
+
+    for key in ["line1", "line2", "bar_label"] {
+        if let Some(entry) = value.get_mut(key) {
+            if let Some(text) = entry.as_str() {
+                let clamped = clamp_str(text, limit);
+                if clamped != text {
+                    *entry = Value::String(clamped);
+                }
+            }
+        }
+    }
+
+    serde_json::to_string(&value).map_err(|e| Error::Parse(format!("demo payload serialize: {e}")))
+}
+
+fn clamp_str(input: &str, max_chars: usize) -> String {
+    let mut iter = input.chars();
+    let clamped: String = iter.by_ref().take(max_chars).collect();
+    let was_truncated = iter.next().is_some();
+    if was_truncated {
+        clamped
+    } else {
+        input.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::payload::{DEFAULT_PAGE_TIMEOUT_MS, DEFAULT_SCROLL_MS};
+
+    fn demo_defaults() -> PayloadDefaults {
+        PayloadDefaults {
+            scroll_speed_ms: DEFAULT_SCROLL_MS,
+            page_timeout_ms: DEFAULT_PAGE_TIMEOUT_MS,
+        }
+    }
+
+    #[test]
+    fn demo_frames_clamp_to_display_width() {
+        let frames = build_demo_frames(demo_defaults(), 16).unwrap();
+        assert_eq!(frames.len(), DEMO_PAYLOADS.len());
+        for frame in frames {
+            assert!(frame.line1.chars().count() <= 16);
+            assert!(frame.line2.chars().count() <= 16);
+            if let Some(label) = &frame.bar_label {
+                assert!(label.chars().count() <= 16);
+            }
+        }
+    }
+
+    #[test]
+    fn long_demo_lines_truncate_to_hardware_max() {
+        let frames = build_demo_frames(demo_defaults(), 80).unwrap();
+        assert_eq!(frames[9].line1.chars().count(), 40);
+        assert_eq!(frames[10].line1.chars().count(), 40);
+    }
 }

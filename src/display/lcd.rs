@@ -155,13 +155,9 @@ impl Lcd {
                     })
                 }
                 Err(err) => {
-                    eprintln!("warning: lcd init failed ({err}); falling back to stub display");
-                    Ok(Self {
-                        cols,
-                        rows,
-                        stub,
-                        driver: None,
-                    })
+                    // For alpha: do not silently fall back to a stub on Linux — fail fast so
+                    // calling code and operators can detect hardware/init issues clearly.
+                    return Err(err);
                 }
             }
         }

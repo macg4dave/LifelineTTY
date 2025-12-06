@@ -28,12 +28,12 @@ pixels, the hardware path is ready for live data.
 | Alert pair | Blink + backlight flash cadence, alert wording, and TTL expiration. | `blink`, `backlight:false`, `duration_ms` |
 | Scroll/Banner samples | Line-by-line scroll offsets, marquee banner forcing an empty second row. | `scroll`, `scroll_speed_ms`, `mode:"banner"` |
 | Icon showreels | IconBank hot-swapping the curated glyphs (battery, heart, wifi, arrows) without flicker. | `icons` array, IconBank logging |
-| Arrow + degrees frames | Overlaying navigation icons and degree glyphs while a bar animates. | Multiple icons, CGRAM + ASCII fallbacks |
+| Arrow + degrees frames | Overlaying navigation icons and degree glyphs while a bar animates. | Multiple icons, CGRAM swaps; missing glyph requests are recorded (no automatic ASCII fallback) |
 | Ping-pong alert | Combined blink + icon overlay + heartbeats. | Icon overlay with alert + blink |
 
-The playlist loops forever; if you miss a frame just wait for the next rotation. Debug logs tagged
-`demo icon fallback` tell you when IconBank intentionally falls back to ASCII because the request
-would exceed the eight-slot CGRAM budget.
+The playlist loops forever; if you miss a frame just wait for the next rotation. Debug logs indicate
+when IconBank cannot allocate glyphs due to CGRAM saturation; missing requests are recorded but
+not substituted automatically.
 
 ## Building your own demos
 

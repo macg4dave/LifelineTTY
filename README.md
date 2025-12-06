@@ -89,9 +89,10 @@ LifelineTTY listens for **one JSON object per line** over a serial port.
 
 LifelineTTY now ships with a curated HD44780 icon registry and a runtime CGRAM
 bank manager so you can request meaningful glyphs without hand-crafting custom
-bytes. Send an `icons` array in your payload and the render loop hot-swaps the
-needed bitmaps into the LCD before each render pass, falling back to ASCII when
-the request would exceed the hardware’s custom slot budget.
+ bytes. Send an `icons` array in your payload and the render loop hot-swaps the
+ needed bitmaps into the LCD before each render pass. When the CGRAM budget is exceeded the
+ extra icon requests are recorded as missing and will not be silently substituted
+ with ASCII characters.
 
 Current semantic icon names (case/spacing/hyphen normalizations are accepted)
 include:
@@ -105,8 +106,7 @@ degree_c, degree_f
 
 Each payload can request up to **four** icons so the daemon keeps the eight-slot
 CGRAM bank free for bar/heartbeat overlays. When you send more than four names,
-the extras are dropped and the daemon falls back to the ASCII placeholder for
-each glyph (e.g., `wifi` becomes `w`, `heart` becomes `h`). Set
+ the extras are dropped and the daemon records them as missing (no ASCII substitution). Set
 `LIFELINETTY_LOG_LEVEL=debug` or `--log-level debug` to see icon saturation
 warnings in `/run/serial_lcd_cache` and trim the offending names if needed.
 Unknown names are ignored entirely, so typos such as `"batery"` simply omit

@@ -98,28 +98,8 @@ impl Icon {
         }
     }
 
-    pub fn ascii_fallback(&self) -> Option<char> {
-        match *self {
-            Icon::Battery => Some('b'),
-            Icon::Heart | Icon::OpenHeart => Some('h'),
-            Icon::Wifi => Some('w'),
-            Icon::Arrow => Some('>'),
-            Icon::Bell => Some('!'),
-            Icon::Note => Some('n'),
-            Icon::Clockface => Some('o'),
-            Icon::Duck => Some('d'),
-            Icon::Check => Some('v'),
-            Icon::Cross => Some('x'),
-            Icon::Smile => Some(')'),
-            Icon::UpArrow | Icon::UpArrowLeft | Icon::UpArrowRight => Some('^'),
-            Icon::DownArrow | Icon::DownArrowLeft | Icon::DownArrowRight => Some('v'),
-            Icon::ReturnArrow => Some('<'),
-            Icon::Hourglass => Some(':'),
-            Icon::DegreeSymbol => Some('*'),
-            Icon::DegreeC => Some('C'),
-            Icon::DegreeF => Some('F'),
-        }
-    }
+    // ASCII fallbacks have been removed — missing glyphs should be handled by the
+    // renderer or caller instead of silently substituting characters.
 }
 
 impl DisplayMode {
@@ -179,10 +159,5 @@ mod tests {
         );
     }
 
-    #[test]
-    fn icon_ascii_fallback_covers_variants() {
-        assert_eq!(Icon::Wifi.ascii_fallback(), Some('w'));
-        assert_eq!(Icon::Heart.ascii_fallback(), Some('h'));
-        assert_eq!(Icon::DownArrowLeft.ascii_fallback(), Some('v'));
-    }
+    // duplicate test removed; kept the canonical `icon_bitmap_matches_reference` above
 }

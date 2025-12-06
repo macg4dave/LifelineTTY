@@ -14,8 +14,10 @@ impl GlyphWriter for Lcd {
 
 const MAX_SLOTS: usize = 8;
 const BAR_LEVEL_COUNT: usize = 6;
-const BAR_FALLBACK_CHARS: [char; BAR_LEVEL_COUNT] = [' ', '.', ':', '-', '=', '#'];
-const HEARTBEAT_FALLBACK_CHAR: char = 'h';
+// Note: We do not provide ASCII fallbacks here — missing glyphs are considered
+// missing and will be surfaced to callers. Render code should decide how to
+// present absence of CGRAM glyphs (e.g. leave blank) rather than substituting
+// ASCII characters silently.
 
 const BAR_BITMAPS: [[u8; 8]; BAR_LEVEL_COUNT] = [
     [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
@@ -80,15 +82,12 @@ impl IconPalette {
         self.missing_icons.push(icon);
     }
 
-    pub fn bar_char(&self, level: usize) -> char {
-        self.bar_chars
-            .get(level)
-            .and_then(|ch| *ch)
-            .unwrap_or(BAR_FALLBACK_CHARS[level.min(BAR_FALLBACK_CHARS.len() - 1)])
+    pub fn bar_char(&self, level: usize) -> Option<char> {
+        self.bar_chars.get(level).and_then(|ch| *ch)
     }
 
-    pub fn heartbeat_char(&self) -> char {
-        self.heartbeat_char.unwrap_or(HEARTBEAT_FALLBACK_CHAR)
+    pub fn heartbeat_char(&self) -> Option<char> {
+        self.heartbeat_char
     }
 
     pub fn icon_char(&self, icon: Icon) -> Option<char> {
@@ -321,7 +320,7 @@ mod tests {
             )
             .unwrap();
 
-        // With bar + heartbeat active only one icon fits; the rest fall back to ASCII.
+        // With bar + heartbeat active only one icon fits; the rest are recorded as missing.
         assert!(palette.icon_char(icons[0]).is_some());
         assert_eq!(palette.missing_icons.len(), icons.len() - 1);
         assert!(palette

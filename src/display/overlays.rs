@@ -164,7 +164,7 @@ fn render_bar(percent: u8, width: usize, palette: &IconPalette) -> String {
     for col in 0..width {
         let remaining = filled_units.saturating_sub(col * max_level);
         let level = remaining.min(max_level);
-        s.push(palette.bar_char(level));
+        s.push(palette.bar_char(level).unwrap_or(' '));
     }
     s
 }
@@ -221,7 +221,9 @@ fn overlay_heartbeat(text: &mut String, width: usize, palette: &IconPalette) {
         chars.truncate(width);
     }
     if let Some(last) = chars.last_mut() {
-        *last = palette.heartbeat_char();
+        if let Some(ch) = palette.heartbeat_char() {
+            *last = ch;
+        }
     }
     *text = chars.into_iter().collect();
 }
@@ -239,7 +241,7 @@ fn overlay_icons(
     }
     let target = if bar_row == Some(1) { line1 } else { line2 };
     let icon = icons[0];
-    let Some(icon_char) = palette.icon_char(icon).or_else(|| icon.ascii_fallback()) else {
+    let Some(icon_char) = palette.icon_char(icon) else {
         return;
     };
     let mut chars: Vec<char> = target.chars().collect();

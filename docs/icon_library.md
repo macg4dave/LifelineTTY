@@ -56,7 +56,6 @@ These glyphs represent a vertical RSSI-style bar graph. Slot `0` is blank; slot 
 The LifelineTTY runtime now virtualizes CGRAM through the IconBank, so any name defined in this
 catalog can be referenced from the payload’s `icons` array. Each render pass can stage up to eight
 custom glyphs. The stacked bar graph and heartbeat overlay consume part of that budget when they
-are enabled, and any additional icons in the payload fall back to their ASCII placeholder (with a
-debug log entry) so the LCD never displays stale glyphs.
+are enabled; any additional icons in the payload are recorded as missing (debug logs report the missing requests) — they are not automatically substituted with ASCII placeholders.
 
 Include the names directly in your payload (e.g., `{ "schema_version":1, "icons":["wifi","battery"] }`). Unknown names are ignored so misspelled entries simply drop out of the render pass. The runtime regenerates CGRAM data before every write, so you no longer need to embed raw `\x00` bytes or worry about slot ordering across frames.

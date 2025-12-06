@@ -78,6 +78,31 @@ Focus: **Debug existing features, expand tests, and run real-world user trials**
   - Files: `src/display/{lcd,overlays,icon_bank}.rs`, `src/lcd_driver/{mod,pcf8574}.rs`, `tests/bin_smoke.rs`, `tests/integration_mock.rs`, `docs/lcd_patterns.md`.
   - Actions: add host-mode/stub tests for CGRAM swaps and backlight/blink paths; document demo patterns and expected visuals; ensure icon churn respects 8-slot limit with deterministic fallbacks.
 
+  ### P2a — Remove LCD icon & display-type fallbacks (alpha)
+
+  Status: 🔴 Active (alpha removal) | Owner: Display
+
+  Summary: Because we are in alpha, the project will remove implicit ASCII fallbacks and silent stub display fallbacks in this release. The goal is to make missing glyphs and hardware init failures explicit, simpler to test, and easier for operators to diagnose.
+
+  What “done” means:
+  - Remove `Icon::ascii_fallback()` usages and stop automatically substituting ASCII glyphs in render paths.
+  - Remove deterministic fallback characters embedded in `IconPalette` getters; the palette will return optional glyphs and the render should handle absence (empty/blank cells) explicitly.
+  - On Linux, `Lcd::new()` will return an error on hardware init failure instead of falling back silently to a stub; callers and tools must handle this explicitly.
+  - Update docs, demos, and tests to reflect the new deterministic behavior.
+
+  Files to change / review:
+  - `src/display/icon_bank.rs`
+  - `src/display/overlays.rs`
+  - `src/payload/icons.rs`
+  - `src/display/lcd.rs`
+  - Documentation: `README.md`, `docs/lcd_patterns.md`, `docs/demo_playbook.md`, `samples/*.json`
+
+  Acceptance criteria:
+  - Unit and integration tests updated so missing icons are recorded and not silently substituted.
+  - Tests and smoke checks updated for demo payloads; behavior is deterministic and obvious when glyphs are missing or when hardware fails to initialise.
+  - Documentation explains the current alpha removal and how operators should handle missing glyphs / hardware errors.
+
+
 - **Field trial readiness (real hardware + doc updates)**
   - Files: `docs/dev_test_real.md`, `docs/architecture.md`, `README.md`, `docs/demo_playbook.md`, `samples/` payloads.
   - Actions: script repeatable runs using existing `devtest/*.sh`; capture expected outputs; document failure triage steps; ensure cache paths are cleared between runs.
@@ -126,6 +151,8 @@ Record outcomes and defects in RAM-disk logs; reproduce with tests before closin
 
 - Keep this file as the active roadmap for v0.2.0; archive older versions under `docs/Roadmaps/v0.1.0` as needed.
 - Field-trial issues must land with a regression test before closing.
+
+- Change log: see `docs/Roadmaps/v0.2.0/changelog.md` for details of the fallbacks removal (2025-12-05).
 
 ### Milestone execution cues
 

@@ -32,7 +32,8 @@ enable them so you can script new behaviors without poking through the entire re
 ## Icon-heavy overlays
 
 - Populate the `icons` array with semantic names from `docs/icon_library.md`. IconBank auto-loads
-  them each frame and falls back to ASCII when the eight-slot CGRAM budget is exceeded.
+  them each frame; when the eight-slot CGRAM budget is exceeded the extra icon requests are
+  recorded as missing and will not be silently substituted.
 - When you need both icons and bars, keep the bar on line 2 so it reuses the cached partial-block
   glyphs and leaves more room for overlay icons. This exact trick powers the “Polling snapshot” demo.
 - Navigation cues (arrows, return arrow, hourglass) work nicely as live wizard prompts or tunnel

@@ -182,7 +182,7 @@ fn log_demo_icon_fallbacks(logger: &Logger, palette: Option<IconPalette>) {
         .collect::<Vec<_>>()
         .join(", ");
     logger.debug(format!(
-        "demo icon fallback: CGRAM full, showing ASCII for [{joined}]"
+        "demo icon allocation: CGRAM full, recorded missing glyphs [{joined}]"
     ));
 }
 

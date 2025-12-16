@@ -31,7 +31,7 @@ If you’re not on a Pi, download the correct binary from Releases.
 Works with **all HD44780 character LCDs**:
 
 - 16×2
-- 20×4
+- 20×4 (when configured)
 - 16×4
 - 40×2  
 And more.
@@ -210,9 +210,8 @@ Example command request frame:
 }
 ```
 
-See `samples/payload_examples.json` for ready-made `hello`, `hello_ack`, and
-command-frame snippets, and peek at `samples/payload_examples.old.json` for the
-journal-style summary of a tunnel-aware dashboard.
+See `samples/payload_examples.json` for ready-made display payload frames (NDJSON).
+For `hello` / `hello_ack` wire examples, see the unit tests in `src/app/connection.rs`.
 
 ### Compression envelopes (Milestone F / P14)
 
@@ -226,15 +225,14 @@ wrap each payload in a tiny envelope so the UART only ships compressed bytes:
   "schema_version":1,
   "codec":"lz4",
   "original_len":64,
-  "data":"BASE64-LZ4-BYTES"
+  "data":[0,1,2,3]
 }
 ```
 
 - `schema_version` tracks the envelope itself (must match the daemon’s configured value).
 - `codec` must be one of `lz4`, `zstd`, or `none`.
-- `original_len` protects against truncated base64 blobs; mismatches are rejected.
-- `data` is base64-encoded LZ4/Zstd bytes; `serde_bytes` handles the encoding automatically if
-  you serialize a `Vec<u8>`/`ByteBuf`.
+- `original_len` protects against truncated/garbled payload bytes; mismatches are rejected.
+- `data` is the compressed payload as a JSON byte array (a `Vec<u8>`/`ByteBuf`).
 
 If compression is disabled or a different codec arrives than the configured `codec`, the payload is
 rejected (and logged) instead of being decompressed. This keeps legacy peers on plaintext while
@@ -443,7 +441,7 @@ Milestone G supplies an official interactive shell for the command tunnel. Run `
 ### Serial precedence cheatsheet
 
 - If a flag is omitted, the daemon falls back to `~/.serial_lcd/config.toml`.
-- When both CLI and config omit a setting, the built-in defaults apply: `/dev/ttyUSB0` @ 9600 8N1, 20×4 LCD.
+- When both CLI and config omit a setting, the built-in defaults apply: `/dev/ttyUSB0` @ 9600 8N1, 16×2 LCD.
 - Alternate Linux UARTs like `/dev/ttyAMA0`, `/dev/ttyS0`, or USB adapters work equally well—point the CLI flag or config entry at the path you need.
 
 ---

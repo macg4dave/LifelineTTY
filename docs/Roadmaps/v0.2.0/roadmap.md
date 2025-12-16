@@ -2,7 +2,33 @@
 
 Updated 4 Dec 2025
 
-LifelineTTY remains a single Rust daemon that ingests newline-delimited JSON via UART and drives an HD44780 LCD (PCF8574 @ 0x27). All work must obey the charter in `.github/copilot-instructions.md`: single binary, no sockets, no new transports, RAM-disk cache only (`/run/serial_lcd_cache`), persistent config at `~/.serial_lcd/config.toml`, stable CLI flags (`--run`, `--test-lcd`, `--test-serial`, `--device`, `--baud`, `--cols`, `--rows`, `--demo`, `--serialsh`, `--wizard`).
+LifelineTTY remains a single Rust daemon that ingests newline-delimited JSON via UART and drives an HD44780 LCD (PCF8574 @ 0x27). All work must obey the charter in `.github/copilot-instructions.md`: single binary, no sockets, no new transports, RAM-disk cache only (`/run/serial_lcd_cache`), persistent config at `~/.serial_lcd/config.toml`, stable CLI flags (`--run`, `--test-lcd`, `--test-serial`, `--device`, `--baud`, `--cols`, `--rows`, `--demo`, `--serialsh`, `--wizard`, `--config-file`).
+
+## How to read this roadmap
+
+This is an **execution document**, not a wish list.
+
+- **Start here**: Blockers (must stay closed) → Priorities (P1–P4) → Field test matrix → Milestones.
+- **“Done” means**: code + tests + docs land together, and the acceptance checks can be verified with the commands listed in this file.
+- **Avoid drift**: when docs and code disagree, treat the following as sources of truth:
+  - CLI surface: `lifelinetty --help` (implemented in `src/cli.rs`)
+  - Cache policy: `.github/copilot-instructions.md` + `CACHE_DIR` constant in code
+  - Payload contract: `src/payload/` (especially `src/payload/parser.rs`)
+
+### Hardware assumptions (v0.2.0)
+
+- **Primary LCD**: 16×2 HD44780 (PCF8574 @ 0x27).
+- **Configurability**: cols/rows are still configurable via config/CLI, but all tests and docs should assume 16×2 unless explicitly labeled as “alternate geometry”.
+
+### Per-PR validation checklist (v0.2.0)
+
+Every PR that changes runtime behavior should include:
+
+1. Tests: unit + integration coverage for the behavior you changed.
+2. Cache safety: any new/changed log or temp path must stay under `/run/serial_lcd_cache` (and be asserted in tests if practical).
+3. Docs parity: update README and any referenced docs/playbooks when behavior changes.
+4. Local commands (minimum): `cargo fmt`, `cargo clippy -- -D warnings`, `cargo test`.
+5. Platform note: explicitly state x86_64 + ARMv6 status (ran both, or why ARMv6 was skipped).
 
 ## Context & guardrails
 
@@ -49,9 +75,9 @@ Focus: **Debug existing features, expand tests, and run real-world user trials**
 | ID / Theme | Status | Owner | What “done” means (v0.2.0) | Guardrails & acceptance |
 | --- | --- | --- | --- | --- |
 | **P1 — Config hardening (regression sweep)** | 🟢 Done | Config | Config loader now backfills all defaults into `~/.serial_lcd/config.toml` (even when partial/empty) for user visibility; env overrides supported for device/baud/cols/rows; fixtures plus integration tests cover malformed + partial TOML and env precedence; smoke covers CLI cols/rows/baud precedence. | Persist only to `~/.serial_lcd/config.toml`; no new keys unless already documented. Acceptance: fixtures added, integration mock asserts env overrides, smoke covers cols/rows/baud precedence. |
-| **P2 — LCD driver regressions** | 🔵 Open | Display | Increase coverage for flicker-free writes, CGRAM/icon churn, backlight/blink toggles, and demo overlays; add host-mode and (where possible) stub tests plus doc updates (`docs/lcd_patterns.md`), ensuring icon churn respects the 8-slot limit with deterministic fallbacks. | No new driver APIs; keep HD44780 + PCF8574 only. Acceptance: icon churn test proves ≤8 slots with deterministic eviction; docs updated; host-mode stub test added. |
-| **P3 — Serial backoff telemetry** | 🔵 Open | Serial | Verify structured error mapping (permission/unplug/framing) and reconnect counters; add assertions around log locations and rotation under `/run/serial_lcd_cache/serial_backoff.log`. | No new transports; respect 9600 baud floor and backoff timing. Acceptance: log path asserted in tests; reconnect counters exposed; backoff timing covered. |
-| **P4 — Polling/heartbeat stability** | 🔵 Open | Core | Harden polling watchdog interactions and startup/shutdown ordering so LCD stays responsive during reconnects; add time-budgeted tests. | Keep RSS <5 MB; timers respect existing config fields. Acceptance: watchdog/polling tests show render loop stays responsive during reconnects; timing budgets enforced. |
+| **P2 — LCD driver regressions** | 🔵 Open | Display | Expand coverage for flicker-free writes, CGRAM/icon churn, backlight/blink toggles, and demo overlays; add host-mode/stub tests where hardware isn’t available; update `docs/lcd_patterns.md` with a 16×2 visual expectation table for the demo playlist and common overlays. | No new driver APIs; keep HD44780 + PCF8574 only. Acceptance: (1) icon churn tests prove ≤8 slots and deterministic eviction behavior, (2) backlight/blink toggles are covered by tests, (3) docs updated for 16×2 expected visuals. |
+| **P3 — Serial backoff telemetry** | 🔵 Open | Serial | Verify structured error mapping (permission/unplug/framing) and reconnect counters; assert log placement and rotation limits for serial backoff logs under `/run/serial_lcd_cache/serial_backoff*`. | No new transports; respect 9600 baud floor and backoff timing. Acceptance: (1) tests assert log path is under cache, (2) reconnect counters increase deterministically in fake/unplug scenarios, (3) backoff timing is covered by unit tests with bounded time budgets. |
+| **P4 — Polling/heartbeat stability** | 🔵 Open | Core | Harden polling/watchdog interactions and startup/shutdown ordering so the LCD render loop stays responsive during reconnects; add time-budgeted tests that exercise reconnect + polling overlap without flakes. | Keep RSS <5 MB; timers respect existing config fields. Acceptance: (1) watchdog/polling tests prove render loop keeps updating during reconnect/backoff, (2) timing budgets enforced (no tests that hang), (3) any new logs remain under cache and are asserted when practical. |
 | **Bug backlog & field fixes** | 🔵 Open | Rotation | Triaged defects from real hardware runs get repro tests and fixes in the same PR; no feature creep. | Must ship with regression tests and doc updates as needed; log paths remain in cache. |
 
 > Execution note for AI/agents: keep changes minimal, land tests alongside fixes, and prefer touching only the files listed under each priority/workstream.
@@ -73,10 +99,16 @@ Focus: **Debug existing features, expand tests, and run real-world user trials**
   - Files: `src/config/loader.rs`, `src/config/mod.rs`, `src/serial/{mod,backoff,telemetry}.rs`, `src/app/{connection,watchdog,polling}.rs`, `tests/{bin_smoke,integration_mock,fake_serial_loop,latency_sim}.rs`.
   - Actions: tighten validation errors, add fixtures for malformed config, assert log placement/rotation in cache, ensure watchdog + polling timers never starve render loop.
   - Cache audit (P3/B3): assert serial backoff/telemetry/tunnel logs stay under `/run/serial_lcd_cache` with rotation limits, extend `tests/integration_mock.rs`/bin smoke to verify paths.
+  - Evidence to capture (per change):
+    - Unit/integration tests that reproduce the failure mode (unplug, permission denied, malformed payload, LCD init failure).
+    - A representative log bundle under `/run/serial_lcd_cache/<family>/` that matches the test name/scenario.
 
 - **LCD regression coverage**
   - Files: `src/display/{lcd,overlays,icon_bank}.rs`, `src/lcd_driver/{mod,pcf8574}.rs`, `tests/bin_smoke.rs`, `tests/integration_mock.rs`, `docs/lcd_patterns.md`.
   - Actions: add host-mode/stub tests for CGRAM swaps and backlight/blink paths; document demo patterns and expected visuals; ensure icon churn respects 8-slot limit with deterministic fallbacks.
+  - Evidence to capture (per change):
+    - A 16×2 expected-output table or screenshot notes in `docs/lcd_patterns.md` (frame-by-frame where useful).
+    - A deterministic host-mode test that proves behavior without real I²C hardware.
 
   ### P2a — Remove LCD icon & display-type fallbacks (alpha)
 
@@ -106,6 +138,9 @@ Focus: **Debug existing features, expand tests, and run real-world user trials**
 - **Field trial readiness (real hardware + doc updates)**
   - Files: `docs/dev_test_real.md`, `docs/architecture.md`, `README.md`, `docs/demo_playbook.md`, `samples/` payloads.
   - Actions: script repeatable runs using existing `devtest/*.sh`; capture expected outputs; document failure triage steps; ensure cache paths are cleared between runs.
+  - Evidence to capture (per run):
+    - Scenario directory under `/run/serial_lcd_cache/<scenario>-YYYYMMDD/` with logs and the exact command lines used.
+    - A short note in the PR describing whether the run was on x86_64 (Docker) or ARMv6 (Pi 1), plus any observed deviations.
 
 - **Dependency alignment**
   - Files: `Cargo.toml`, `docs/lifelinetty_creates.md`.
@@ -123,7 +158,7 @@ Focus: **Debug existing features, expand tests, and run real-world user trials**
 | Baseline | Pi 1 Model A + `/dev/ttyUSB0` (FTDI) | 9600 8N1 | 16×2 | `samples/payload_examples.json` | Clean render, no flicker; cache logs only under `/run/serial_lcd_cache`; RSS <5 MB for 2h run. |
 | Alt TTY | Pi 1 Model A + `/dev/ttyAMA0` | 9600 8N1 | 16×2 | same as above | Wizard and config honor device override; reconnect/backoff logs categorized. |
 | Higher baud probe | Pi 1 Model A + `/dev/ttyUSB0` | 19200 8N1 (post-wizard) | 16×2 | demo payloads | No framing errors; heartbeat/watchdog stay green. |
-| LCD stress | Pi 1 Model A + I²C backpack | 9600 8N1 | 20×4 (if available) | icon-heavy samples | CGRAM swaps ≤8 icons; no display corruption; overlays render. |
+| LCD stress | Pi 1 Model A + I²C backpack | 9600 8N1 | 16×2 | icon-heavy samples | CGRAM swaps ≤8 icons; no display corruption; overlays render. |
 | Tunnel coexists | Pi 1 Model A + `/dev/ttyUSB0` | 9600 8N1 | 16×2 | command tunnel enabled via `--serialsh` | Busy/Exit codes correct; LCD continues rendering; cache logs under `tunnel/` only. |
 
 Record outcomes and defects in RAM-disk logs; reproduce with tests before closing.

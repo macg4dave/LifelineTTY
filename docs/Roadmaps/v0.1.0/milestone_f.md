@@ -46,7 +46,7 @@ Milestone F keeps the current framing (newline-delimited JSON) but wraps it in 
 
 **Files:** `src/payload/parser.rs`, new `src/app/compression.rs`, `src/serial/*.rs` (for buffer sizing), `docs/architecture.md`, `README.md` (protocol section).
 
-- Add an optional outer envelope such as `{ "type": "compressed", "schema_version": N, "codec": "lz4", "original_len": 1234, "data": "<base64>" }` and let the parser drive the codec selection.
+- Add an optional outer envelope such as `{ "type": "compressed", "schema_version": N, "codec": "lz4", "original_len": 1234, "data": [/* bytes */] }` and let the parser drive the codec selection.
 - Implement the new `src/app/compression.rs` helpers using `lz4_flex` and `zstd` so compressed frames can be round-tripped before the CLI/config toggles land. Streaming encoders emit standard LZ4 frames or zstd streams while the shared bean uses a 4 KB read buffer to keep allocations predictable.
 - Decompression loops rehydrate the payload in chunks, returning `Error::Parse` when the data would exceed 1 MB so `/run/serial_lcd_cache` stays under the 5 MB RSS guardrail; unknown codecs also surface `Error::Parse` today.
 - Export `CompressionCodec` so future readers (handshake state, CLI/config flags) can call into these helpers without duplicating logic, and keep the helpers behind the `app` module until the pending toggles arrive.
@@ -107,7 +107,7 @@ Milestone F keeps the current framing (newline-delimited JSON) but wraps it in 
   "schema_version":1,
   "codec":"lz4",
   "original_len":128,
-  "data":"BASE64-LZ4-BYTES"
+  "data":[0,1,2,3]
 }
 ```
 
@@ -115,7 +115,7 @@ Milestone F keeps the current framing (newline-delimited JSON) but wraps it in 
 
 - Unit tests: extend `src/payload/parser.rs` to cover schema versions, bounds, and compression decode errors; add codec-specific tests under a new `payload::compression` module.
 - Integration tests: enhance `tests/integration_mock.rs` and `tests/fake_serial_loop.rs` so compressed fixtures reach the LCD stub without panics; verify duplicate suppression works when the same logical payload alternates between compressed/uncompressed forms.
-- Fuzz/boundary tests: optionally leverage `proptest` (behind a dev-only feature) to stress the parser with truncated JSON, bogus base64, and oversize `original_len` claims.
+- Fuzz/boundary tests: optionally leverage `proptest` (behind a dev-only feature) to stress the parser with truncated JSON, bogus byte arrays, and oversize `original_len` claims.
 - CLI smoke: update `tests/bin_smoke.rs` to exercise `lifelinetty --run --compressed --codec lz4 --demo` and confirm help text documents the new flags.
 - Release checklist: document how to toggle compression in `README.md` and `docs/architecture.md`, and capture negotiation logs during QA runs on Raspberry Pi 1 hardware.
 

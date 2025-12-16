@@ -224,9 +224,7 @@ mod tests {
             serial.writes(),
             &[
                 "INIT".to_string(),
-                encoded(TunnelMsgOwned::CmdRequest {
-                    cmd: "ping".into(),
-                }),
+                encoded(TunnelMsgOwned::CmdRequest { cmd: "ping".into() }),
             ]
         );
     }

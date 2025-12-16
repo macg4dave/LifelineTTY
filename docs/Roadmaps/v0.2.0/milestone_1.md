@@ -145,7 +145,7 @@ Log each run under `/run/serial_lcd_cache/milestone1/<scenario>-YYYYMMDD/` and `
 
 - **Baseline**: `/dev/ttyUSB0` @ 9600, 16×2, payload `samples/payload_examples.json`.
 - **Alt TTY**: `/dev/ttyAMA0` @ 9600, 16×2.
-- **20×4 geometry**: `/dev/ttyUSB0` @ 9600, 20×4 template.
+- **Alternate geometry (optional)**: `/dev/ttyUSB0` @ 9600, 20×4 template (only when testing wider hardware).
 - **Higher baud probe**: `/dev/ttyUSB0` @ 19200, after 9600 is stable (stress template).
 - **Demo/no-serial smoke**: `--demo` to validate render loop without UART.
 
@@ -203,7 +203,7 @@ Milestone 1 is complete once the documented build job can be executed and audite
 | --- | --- |
 | Container topology + quickstart | "Container topology", "Quickstart with `docker run`", and "Quickstart with docker-compose" sections describe the paired containers, shared cache, and verbatim `docker run` / compose commands that operators should follow. |
 | Dev loop knobs & templates | "Dev loop knobs" lists the key `devtest/dev.conf` knobs, and `devtest/run-dev.sh` copies the referenced templates (`devtest/config/*.toml`) into each `~/.serial_lcd/config.toml`. The doc references `--config-file` overrides for scenarios as well. |
-| Test matrix & log placement | "Test matrix" explicitly enumerates the baseline, alt-TTY, 20×4, higher baud, and `--demo` scenarios plus the requirement to log each run under `/run/serial_lcd_cache/milestone1/<scenario>-YYYYMMDD` for easy `docker cp` retrieval. |
+| Test matrix & log placement | "Test matrix" explicitly enumerates the baseline, alt-TTY, optional 20×4 (alternate hardware), higher baud, and `--demo` scenarios plus the requirement to log each run under `/run/serial_lcd_cache/milestone1/<scenario>-YYYYMMDD` for easy `docker cp` retrieval. |
 | CI/headless recipe & AI rerun checklist | "CI/headless recipe" describes the env vars for headless invocations, and "AI re-run + debug checklist" lists the steps an AI or operator should repeat along with the cache/log collection commands. |
 | Charter guardrails & troubleshooting | The opening summary, guardrails, and "Troubleshooting" section reiterate the `/run/serial_lcd_cache` + `~/.serial_lcd/config.toml` storage policy, stable flags, and RSS/logging expectations mandated by the charter. |
 

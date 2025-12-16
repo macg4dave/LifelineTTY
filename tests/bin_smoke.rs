@@ -180,9 +180,9 @@ fn payload_sample_parses() {
         .expect("sample payload failed to parse");
 }
 
-    #[test]
-    fn lcd_dashboard_payload_parses_and_sets_fields() {
-        let raw = r#"{
+#[test]
+fn lcd_dashboard_payload_parses_and_sets_fields() {
+    let raw = r#"{
             "schema_version":1,
             "line1":"CPU",
             "line2":"Load 42%",
@@ -192,20 +192,20 @@ fn payload_sample_parses() {
             "mode":"dashboard",
             "page_timeout_ms":2000
         }"#;
-        let defaults = PayloadDefaults {
-            scroll_speed_ms: lifelinetty::config::DEFAULT_SCROLL_MS,
-            page_timeout_ms: lifelinetty::config::DEFAULT_PAGE_TIMEOUT_MS,
-        };
-        let frame = RenderFrame::from_payload_json_with_defaults(raw, defaults)
-            .expect("dashboard payload failed to parse");
+    let defaults = PayloadDefaults {
+        scroll_speed_ms: lifelinetty::config::DEFAULT_SCROLL_MS,
+        page_timeout_ms: lifelinetty::config::DEFAULT_PAGE_TIMEOUT_MS,
+    };
+    let frame = RenderFrame::from_payload_json_with_defaults(raw, defaults)
+        .expect("dashboard payload failed to parse");
 
-        assert_eq!(frame.line1, "CPU");
-        assert_eq!(frame.line2, "Load 42%");
-        assert_eq!(frame.bar_percent, Some(42));
-        assert_eq!(frame.bar_label.as_deref(), Some("CPU"));
-        assert_eq!(frame.page_timeout_ms, 2000);
-        assert!(!frame.config_reload);
-    }
+    assert_eq!(frame.line1, "CPU");
+    assert_eq!(frame.line2, "Load 42%");
+    assert_eq!(frame.bar_percent, Some(42));
+    assert_eq!(frame.bar_label.as_deref(), Some("CPU"));
+    assert_eq!(frame.page_timeout_ms, 2000);
+    assert!(!frame.config_reload);
+}
 
 #[test]
 fn config_supports_alt_ttys() {

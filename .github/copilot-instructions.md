@@ -1,19 +1,20 @@
 # LifelineTTY Copilot Charter
-Purpose: keep every AI-assisted change aligned with the Dec 2025 roadmap in `docs/roadmap.md`. All guidance here is binding—stay within scope, finish the blockers first, and move through priorities only when explicitly scheduled.
+Purpose: keep every AI-assisted change aligned with the active roadmap under `docs/Roadmaps/` (current: `docs/Roadmaps/v0.2.0/roadmap.md`). All guidance here is binding—stay within scope, finish the blockers first, and move through priorities only when explicitly scheduled.
 
 ## One-line mission
-Ship a single, ultra-light Rust daemon, that reads newline-delimited JSON (and key=value fallbacks) from `/dev/ttyUSB0` at 9600 baud, renders two HD44780 LCD lines via a PCF8574 I²C backpack, and runs for months without exceeding 5 MB RSS.
+Ship a single, ultra-light Rust daemon that reads newline-delimited JSON (and key=value fallbacks) from `/dev/ttyUSB0` at 9600 baud (8N1), renders to an HD44780 LCD via a PCF8574 I²C backpack, and runs for months without exceeding 5 MB RSS.
 
 ## Roadmap alignment (read before coding)
 1. **Blockers (B1–B6)** — rename fallout, charter sync, cache-policy audit, CLI docs/tests, prompt refresh, and release tooling. Nothing else lands until these are closed.
 2. **Priority queue (P1–P20)** — once blockers are done, tackle P1–P4 (rename lint, baud audit, config hardening, LCD regression tests) before touching telemetry, tunnels, or protocol work.
-3. **Milestones (A–G)** — every large feature (command tunnel, negotiation, file push/pull, polling+heartbeat, display expansion, strict JSON+compression, serial shell) builds on specific priorities. Reference the milestone workflows in `docs/roadmap.md` when planning.
+3. **Milestones (A–G)** — every large feature (command tunnel, negotiation, file push/pull, polling+heartbeat, display expansion, strict JSON+compression, serial shell) builds on specific priorities. Reference the milestone workflows in `docs/Roadmaps/v0.2.0/roadmap.md` (or the active version under `docs/Roadmaps/`) when planning.
 4. Always annotate changes with the roadmap item they advance (e.g., “P3: Config loader hardening”) so we can trace progress.
 
 ## Core behavior (never change without approval)
 - **IO**: UART input via `/dev/ttyUSB0` (9600 8N1) by default; config/CLI overrides may point to `/dev/ttyAMA0`, `/dev/ttyS*`, or USB adapters as long as they speak the same framing. LCD output via HD44780 + PCF8574 @ 0x27. No Wi-Fi, Bluetooth, sockets, HTTP, USB HID, or other transports.
-- **CLI**: binary is invoked as `lifelinetty`. Supported flags: `--run`, `--test-lcd`, `--test-serial`, `--device`, `--baud`, `--cols`, `--rows`, `--demo`. Do **not** add flags or modes unless the roadmap explicitly calls for it (e.g., future `--serialsh`).
-- **Protocols**: newline-terminated JSON or `key=value` pairs; LCD output is always two 16-character lines. Exit code 0 on success, non-zero on fatal errors.
+- **CLI**: binary is invoked as `lifelinetty`. The supported CLI surface is whatever `lifelinetty --help` prints (implemented in `src/cli.rs`). Do **not** add new flags or modes unless the roadmap explicitly calls for it.
+- **Protocols**: newline-terminated JSON or `key=value` pairs. JSON payloads must include `schema_version` (see `src/payload/parser.rs`). Exit code 0 on success, non-zero on fatal errors.
+- **Display geometry**: Primary target is a 16×2 HD44780 LCD. Columns/rows are still configurable via config/CLI (defaults are 16×2); avoid hard-coding 20×4 assumptions.
 
 ## Storage + RAM-disk policy (mandatory)
 - Persistent writes are limited to `~/.serial_lcd/config.toml`.

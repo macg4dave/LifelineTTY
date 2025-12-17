@@ -28,13 +28,10 @@ If you’re not on a Pi, download the correct binary from Releases.
 
 ## 2. Wire the LCD (I²C)
 
-Works with **all HD44780 character LCDs**:
+Primary target is a **16×2 HD44780 character LCD** (PCF8574 I²C backpack @ `0x27`).
 
-- 16×2
-- 20×4 (when configured)
-- 16×4
-- 40×2  
-And more.
+Other HD44780 glass sizes (e.g., 20×4, 16×4, 40×2) can work **when configured**, but the default
+UI patterns, demo playlist, and most docs/tests assume 16×2.
 
 Wire the PCF8574 backpack like this:
 
@@ -144,6 +141,12 @@ Examples:
 
 ```json
 {"schema_version":1,"line1":"Hello","line2":"World"}
+```
+
+Key=value fallback (space-separated):
+
+```
+schema_version=1 line1=Hello line2=World
 ```
 
 ### Dashboard

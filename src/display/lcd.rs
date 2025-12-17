@@ -119,8 +119,19 @@ pub struct Lcd {
     cols: u8,
     rows: u8,
     stub: StubState,
+    observe_stub: bool,
     #[cfg(target_os = "linux")]
     driver: Option<DriverBackend>,
+}
+
+fn observe_lcd_stub_enabled() -> bool {
+    let Ok(value) = std::env::var("LIFELINETTY_LCD_OBSERVE") else {
+        return false;
+    };
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
 }
 
 impl Lcd {
@@ -129,6 +140,7 @@ impl Lcd {
             cols,
             rows,
             stub: StubState::new(),
+            observe_stub: observe_lcd_stub_enabled(),
             #[cfg(target_os = "linux")]
             driver: None,
         }
@@ -151,6 +163,7 @@ impl Lcd {
                         cols,
                         rows,
                         stub,
+                        observe_stub: observe_lcd_stub_enabled(),
                         driver: Some(driver),
                     })
                 }
@@ -169,8 +182,19 @@ impl Lcd {
                 cols,
                 rows,
                 stub: StubState::new(),
+                observe_stub: observe_lcd_stub_enabled(),
             })
         }
+    }
+
+    fn observe_stub_snapshot(&self) {
+        if !self.observe_stub {
+            return;
+        }
+        eprintln!(
+            "LIFELINETTY_LCD {:?} | {:?}",
+            self.stub.last_lines.0, self.stub.last_lines.1
+        );
     }
 
     pub fn render_boot_message(&mut self) -> Result<()> {
@@ -185,7 +209,9 @@ impl Lcd {
                 return driver.clear();
             }
         }
-        self.stub.clear()
+        let out = self.stub.clear();
+        self.observe_stub_snapshot();
+        out
     }
 
     pub fn set_backlight(&mut self, on: bool) -> Result<()> {
@@ -195,7 +221,9 @@ impl Lcd {
                 return driver.set_backlight(on);
             }
         }
-        self.stub.set_backlight(on)
+        let out = self.stub.set_backlight(on);
+        self.observe_stub_snapshot();
+        out
     }
 
     pub fn set_blink(&mut self, on: bool) -> Result<()> {
@@ -205,7 +233,9 @@ impl Lcd {
                 return driver.set_blink(on);
             }
         }
-        self.stub.set_blink(on)
+        let out = self.stub.set_blink(on);
+        self.observe_stub_snapshot();
+        out
     }
 
     pub fn write_line(&mut self, row: u8, content: &str) -> Result<()> {
@@ -224,7 +254,9 @@ impl Lcd {
                 return driver.write_line(row, &trimmed);
             }
         }
-        self.stub.write_line(row, &trimmed)
+        let out = self.stub.write_line(row, &trimmed);
+        self.observe_stub_snapshot();
+        out
     }
 
     /// Convenience to write both lines back-to-back to reduce flicker.
@@ -240,7 +272,9 @@ impl Lcd {
                 return driver.custom_char(slot, bitmap);
             }
         }
-        self.stub.custom_char(slot, bitmap)
+        let out = self.stub.custom_char(slot, bitmap);
+        self.observe_stub_snapshot();
+        out
     }
 
     pub fn cols(&self) -> u8 {
@@ -280,6 +314,7 @@ impl Lcd {
             cols,
             rows,
             stub: StubState::new(),
+            observe_stub: observe_lcd_stub_enabled(),
             driver: Some(driver),
         })
     }

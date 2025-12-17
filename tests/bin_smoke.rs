@@ -181,6 +181,30 @@ fn payload_sample_parses() {
 }
 
 #[test]
+fn payload_examples_ndjson_lines_parse() {
+    let payload = Path::new(env!("CARGO_MANIFEST_DIR")).join("samples/payload_examples.json");
+    assert!(
+        payload.exists(),
+        "expected sample payload at {}",
+        payload.display()
+    );
+    let raw = fs::read_to_string(&payload).expect("failed to read sample payload");
+    let defaults = PayloadDefaults {
+        scroll_speed_ms: lifelinetty::config::DEFAULT_SCROLL_MS,
+        page_timeout_ms: lifelinetty::config::DEFAULT_PAGE_TIMEOUT_MS,
+    };
+
+    for (idx, line) in raw.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        RenderFrame::from_payload_json_with_defaults(trimmed, defaults)
+            .unwrap_or_else(|e| panic!("ndjson line {} failed to parse: {e} ({trimmed})", idx + 1));
+    }
+}
+
+#[test]
 fn lcd_dashboard_payload_parses_and_sets_fields() {
     let raw = r#"{
             "schema_version":1,

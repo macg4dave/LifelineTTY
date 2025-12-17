@@ -240,14 +240,245 @@ pub fn normalize_payload_json<'a>(raw: &'a str) -> Result<Cow<'a, str>> {
     normalize_payload_json_with_policy(raw, CompressionPolicy::allow_any())
 }
 
+fn parse_bool_kv(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" | "yes" | "on" => Some(true),
+        "false" | "0" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+fn parse_kv_pairs(raw: &str) -> Result<Vec<(String, String)>> {
+    let mut pairs = Vec::new();
+    let bytes = raw.as_bytes();
+    let mut idx = 0;
+    while idx < bytes.len() {
+        while idx < bytes.len() && bytes[idx].is_ascii_whitespace() {
+            idx += 1;
+        }
+        if idx >= bytes.len() {
+            break;
+        }
+
+        let key_start = idx;
+        while idx < bytes.len() && bytes[idx] != b'=' && !bytes[idx].is_ascii_whitespace() {
+            idx += 1;
+        }
+        if idx >= bytes.len() || bytes[idx] != b'=' {
+            return Err(Error::Parse("invalid key=value payload".into()));
+        }
+        let key = raw[key_start..idx].trim();
+        idx += 1; // '='
+
+        if key.is_empty() {
+            return Err(Error::Parse("invalid key=value payload".into()));
+        }
+
+        let value = if idx < bytes.len() && bytes[idx] == b'"' {
+            idx += 1; // opening quote
+            let mut out = String::new();
+            while idx < bytes.len() {
+                match bytes[idx] {
+                    b'\\' if idx + 1 < bytes.len() => {
+                        let next = bytes[idx + 1];
+                        out.push(next as char);
+                        idx += 2;
+                    }
+                    b'"' => {
+                        idx += 1;
+                        break;
+                    }
+                    b => {
+                        out.push(b as char);
+                        idx += 1;
+                    }
+                }
+            }
+            out
+        } else {
+            let value_start = idx;
+            while idx < bytes.len() && !bytes[idx].is_ascii_whitespace() {
+                idx += 1;
+            }
+            raw[value_start..idx].to_string()
+        };
+
+        pairs.push((key.to_string(), value));
+    }
+    Ok(pairs)
+}
+
+fn normalize_kv_payload_to_json(raw: &str) -> Result<Option<String>> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed.starts_with('{') {
+        return Ok(None);
+    }
+    if !trimmed.contains('=') {
+        return Ok(None);
+    }
+
+    let pairs = parse_kv_pairs(trimmed)?;
+    if pairs.is_empty() {
+        return Ok(None);
+    }
+
+    let mut obj = serde_json::Map::new();
+    let mut schema_version: Option<u8> = None;
+    let mut line1: Option<String> = None;
+    let mut line2: Option<String> = None;
+
+    for (key, value) in pairs {
+        let key = key.to_ascii_lowercase();
+        match key.as_str() {
+            "schema_version" => {
+                let v: u8 = value
+                    .parse()
+                    .map_err(|_| Error::Parse("schema_version must be an integer".into()))?;
+                schema_version = Some(v);
+            }
+            "line1" => {
+                line1 = Some(value);
+            }
+            "line2" => {
+                line2 = Some(value);
+            }
+            "bar" => {
+                let v: u8 = value
+                    .parse()
+                    .map_err(|_| Error::Parse("bar must be an integer".into()))?;
+                obj.insert("bar".into(), serde_json::Value::Number(v.into()));
+            }
+            "bar_value" => {
+                let v: u32 = value
+                    .parse()
+                    .map_err(|_| Error::Parse("bar_value must be an integer".into()))?;
+                obj.insert("bar_value".into(), serde_json::Value::Number(v.into()));
+            }
+            "bar_max" => {
+                let v: u32 = value
+                    .parse()
+                    .map_err(|_| Error::Parse("bar_max must be an integer".into()))?;
+                obj.insert("bar_max".into(), serde_json::Value::Number(v.into()));
+            }
+            "bar_label" => {
+                obj.insert("bar_label".into(), serde_json::Value::String(value));
+            }
+            "bar_line1" => {
+                let v = parse_bool_kv(&value)
+                    .ok_or_else(|| Error::Parse("bar_line1 must be a boolean".into()))?;
+                obj.insert("bar_line1".into(), serde_json::Value::Bool(v));
+            }
+            "bar_line2" => {
+                let v = parse_bool_kv(&value)
+                    .ok_or_else(|| Error::Parse("bar_line2 must be a boolean".into()))?;
+                obj.insert("bar_line2".into(), serde_json::Value::Bool(v));
+            }
+            "backlight" => {
+                let v = parse_bool_kv(&value)
+                    .ok_or_else(|| Error::Parse("backlight must be a boolean".into()))?;
+                obj.insert("backlight".into(), serde_json::Value::Bool(v));
+            }
+            "blink" => {
+                let v = parse_bool_kv(&value)
+                    .ok_or_else(|| Error::Parse("blink must be a boolean".into()))?;
+                obj.insert("blink".into(), serde_json::Value::Bool(v));
+            }
+            "scroll" => {
+                let v = parse_bool_kv(&value)
+                    .ok_or_else(|| Error::Parse("scroll must be a boolean".into()))?;
+                obj.insert("scroll".into(), serde_json::Value::Bool(v));
+            }
+            "scroll_speed_ms" => {
+                let v: u64 = value
+                    .parse()
+                    .map_err(|_| Error::Parse("scroll_speed_ms must be an integer".into()))?;
+                obj.insert(
+                    "scroll_speed_ms".into(),
+                    serde_json::Value::Number(v.into()),
+                );
+            }
+            "duration_ms" => {
+                let v: u64 = value
+                    .parse()
+                    .map_err(|_| Error::Parse("duration_ms must be an integer".into()))?;
+                obj.insert("duration_ms".into(), serde_json::Value::Number(v.into()));
+            }
+            "page_timeout_ms" => {
+                let v: u64 = value
+                    .parse()
+                    .map_err(|_| Error::Parse("page_timeout_ms must be an integer".into()))?;
+                obj.insert(
+                    "page_timeout_ms".into(),
+                    serde_json::Value::Number(v.into()),
+                );
+            }
+            "clear" => {
+                let v = parse_bool_kv(&value)
+                    .ok_or_else(|| Error::Parse("clear must be a boolean".into()))?;
+                obj.insert("clear".into(), serde_json::Value::Bool(v));
+            }
+            "test" => {
+                let v = parse_bool_kv(&value)
+                    .ok_or_else(|| Error::Parse("test must be a boolean".into()))?;
+                obj.insert("test".into(), serde_json::Value::Bool(v));
+            }
+            "mode" => {
+                obj.insert("mode".into(), serde_json::Value::String(value));
+            }
+            "icons" => {
+                let icons = value
+                    .split(',')
+                    .filter(|v| !v.trim().is_empty())
+                    .map(|v| serde_json::Value::String(v.trim().to_string()))
+                    .collect::<Vec<_>>();
+                obj.insert("icons".into(), serde_json::Value::Array(icons));
+            }
+            "checksum" => {
+                obj.insert("checksum".into(), serde_json::Value::String(value));
+            }
+            "config_reload" => {
+                let v = parse_bool_kv(&value)
+                    .ok_or_else(|| Error::Parse("config_reload must be a boolean".into()))?;
+                obj.insert("config_reload".into(), serde_json::Value::Bool(v));
+            }
+            _ => {
+                return Err(Error::Parse(format!("unknown key=value field '{key}'")));
+            }
+        }
+    }
+
+    obj.insert(
+        "schema_version".into(),
+        serde_json::Value::Number((schema_version.unwrap_or(1)).into()),
+    );
+    obj.insert(
+        "line1".into(),
+        serde_json::Value::String(line1.unwrap_or_default()),
+    );
+    obj.insert(
+        "line2".into(),
+        serde_json::Value::String(line2.unwrap_or_default()),
+    );
+
+    let json = serde_json::to_string(&serde_json::Value::Object(obj))
+        .map_err(|e| Error::Parse(format!("json: {e}")))?;
+    Ok(Some(json))
+}
+
 pub fn normalize_payload_json_with_policy<'a>(
     raw: &'a str,
     policy: CompressionPolicy,
 ) -> Result<Cow<'a, str>> {
-    let probe: FrameTypeProbe =
-        serde_json::from_str(raw).map_err(|e| Error::Parse(format!("json: {e}")))?;
+    let trimmed = raw.trim();
+    let normalized_input = match normalize_kv_payload_to_json(trimmed)? {
+        Some(json) => Cow::Owned(json),
+        None => Cow::Borrowed(trimmed),
+    };
+
+    let probe: FrameTypeProbe = serde_json::from_str(normalized_input.as_ref())
+        .map_err(|e| Error::Parse(format!("json: {e}")))?;
     if probe.kind.as_deref() != Some("compressed") {
-        return Ok(Cow::Borrowed(raw));
+        return Ok(normalized_input);
     }
 
     if !policy.enabled {
@@ -256,8 +487,8 @@ pub fn normalize_payload_json_with_policy<'a>(
         ));
     }
 
-    let envelope: CompressionEnvelopeOwned =
-        serde_json::from_str(raw).map_err(|e| Error::Parse(format!("compressed envelope: {e}")))?;
+    let envelope: CompressionEnvelopeOwned = serde_json::from_str(normalized_input.as_ref())
+        .map_err(|e| Error::Parse(format!("compressed envelope: {e}")))?;
     if envelope.schema_version != DEFAULT_PROTOCOL_SCHEMA_VERSION {
         return Err(Error::Parse(format!(
             "unsupported compressed schema_version={} expected={DEFAULT_PROTOCOL_SCHEMA_VERSION}",
@@ -556,6 +787,7 @@ fn compute_bar_percent(payload: &Payload) -> Option<u8> {
 mod tests {
     use super::*;
     use crate::compression::{compress, CompressionCodec};
+    use crc32fast::Hasher;
     use serde::Serialize;
     use serde_bytes::ByteBuf;
 
@@ -565,6 +797,58 @@ mod tests {
 
     fn parse_with_defaults(raw: &str, defaults: Defaults) -> RenderFrame {
         RenderFrame::from_payload_json_with_defaults(raw, defaults).unwrap()
+    }
+
+    #[test]
+    fn kv_payload_parses_simple_frame() {
+        let raw = "schema_version=1 line1=Hello line2=World";
+        let frame = RenderFrame::from_payload_json(raw).unwrap();
+        assert_eq!(frame.line1, "Hello");
+        assert_eq!(frame.line2, "World");
+    }
+
+    #[test]
+    fn kv_payload_allows_quoted_values_with_spaces() {
+        let raw = "schema_version=1 line1=HELLO line2=\"with spaces\"";
+        let frame = RenderFrame::from_payload_json(raw).unwrap();
+        assert_eq!(frame.line1, "HELLO");
+        assert_eq!(frame.line2, "with spaces");
+    }
+
+    #[test]
+    fn kv_payload_rejects_unknown_field() {
+        let raw = "schema_version=1 line1=Hello line2=World nope=1";
+        let err = RenderFrame::from_payload_json(raw).unwrap_err();
+        assert!(format!("{err}").contains("unknown key=value"));
+    }
+
+    #[test]
+    fn from_payload_json_trims_whitespace_and_crlf() {
+        let raw = "\r\n  {\"schema_version\":1,\"line1\":\"Hello\",\"line2\":\"World\"}  \r\n";
+        let frame = RenderFrame::from_payload_json(raw).unwrap();
+        assert_eq!(frame.line1, "Hello");
+        assert_eq!(frame.line2, "World");
+    }
+
+    #[test]
+    fn kv_payload_parses_numbers_and_bools() {
+        let raw = "schema_version=1 line1=CPU line2=Load bar_value=42 bar_max=100 backlight=false blink=true scroll=false page_timeout_ms=2000";
+        let frame = RenderFrame::from_payload_json(raw).unwrap();
+        assert_eq!(frame.line1, "CPU");
+        assert_eq!(frame.line2, "Load");
+        assert_eq!(frame.bar_percent, Some(42));
+        assert!(!frame.backlight_on);
+        assert!(frame.blink);
+        assert!(!frame.scroll_enabled);
+        assert_eq!(frame.page_timeout_ms, 2000);
+    }
+
+    #[test]
+    fn kv_payload_defaults_schema_version_to_one() {
+        let raw = "line1=Hello line2=World";
+        let frame = RenderFrame::from_payload_json(raw).unwrap();
+        assert_eq!(frame.line1, "Hello");
+        assert_eq!(frame.line2, "World");
     }
 
     #[test]
@@ -894,6 +1178,119 @@ mod tests {
             decoded,
             CommandMessage::Request { request_id: 7, .. }
         ));
+    }
+
+    #[test]
+    fn command_frame_decode_rejects_bad_channel() {
+        let msg = CommandMessage::Request {
+            request_id: 7,
+            cmd: "uptime".into(),
+            scratch_path: Some(format!("{}/tunnel/req7", crate::CACHE_DIR)),
+        };
+        let encoded = encode_command_frame(&msg).unwrap();
+        let mut value: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+        if let serde_json::Value::Object(ref mut map) = value {
+            map.insert("channel".into(), serde_json::Value::String("nope".into()));
+        }
+        let tampered = serde_json::to_string(&value).unwrap();
+        let err = decode_command_frame(&tampered).unwrap_err();
+        assert!(format!("{err}").contains("unsupported command channel"));
+    }
+
+    #[test]
+    fn command_frame_decode_rejects_schema_version_mismatch() {
+        let msg = CommandMessage::Request {
+            request_id: 7,
+            cmd: "uptime".into(),
+            scratch_path: Some(format!("{}/tunnel/req7", crate::CACHE_DIR)),
+        };
+        let encoded = encode_command_frame(&msg).unwrap();
+        let mut value: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+        if let serde_json::Value::Object(ref mut map) = value {
+            map.insert(
+                "schema_version".into(),
+                serde_json::Value::Number(serde_json::Number::from(COMMAND_SCHEMA_VERSION + 1)),
+            );
+        }
+        let tampered = serde_json::to_string(&value).unwrap();
+        let err = decode_command_frame(&tampered).unwrap_err();
+        assert!(format!("{err}").contains("unsupported command schema_version"));
+    }
+
+    #[test]
+    fn command_frame_decode_rejects_crc_mismatch() {
+        let msg = CommandMessage::Request {
+            request_id: 7,
+            cmd: "uptime".into(),
+            scratch_path: Some(format!("{}/tunnel/req7", crate::CACHE_DIR)),
+        };
+        let encoded = encode_command_frame(&msg).unwrap();
+        let mut value: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+        if let serde_json::Value::Object(ref mut map) = value {
+            map.insert(
+                "crc32".into(),
+                serde_json::Value::Number(serde_json::Number::from(0)),
+            );
+        }
+        let tampered = serde_json::to_string(&value).unwrap();
+        let err = decode_command_frame(&tampered).unwrap_err();
+        assert!(matches!(err, Error::ChecksumMismatch));
+    }
+
+    #[test]
+    fn command_frame_decode_rejects_oversized_raw_frame() {
+        let raw = "{".repeat(COMMAND_MAX_FRAME_BYTES + 1);
+        let err = decode_command_frame(&raw).unwrap_err();
+        assert!(format!("{err}").contains("command frame exceeds"));
+    }
+
+    #[test]
+    fn command_frame_decode_validates_message_fields() {
+        // Build a command frame that has a valid CRC but an invalid message (scratch_path outside
+        // CACHE_DIR). encode_command_frame would refuse to produce this, but decode should still
+        // reject it.
+        let msg = CommandMessage::Request {
+            request_id: 9,
+            cmd: "whoami".into(),
+            scratch_path: Some("/tmp/out".into()),
+        };
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let mut hasher = Hasher::new();
+        hasher.update(&bytes);
+        let crc32 = hasher.finalize();
+
+        let frame = serde_json::json!({
+            "channel": "command",
+            "schema_version": COMMAND_SCHEMA_VERSION,
+            "message": msg,
+            "crc32": crc32,
+        });
+        let raw = serde_json::to_string(&frame).unwrap();
+        let err = decode_command_frame(&raw).unwrap_err();
+        assert!(format!("{err}").contains("scratch_path"));
+    }
+
+    #[test]
+    fn command_frame_decode_rejects_empty_command_even_with_valid_crc() {
+        let msg = CommandMessage::Request {
+            request_id: 10,
+            cmd: "   ".into(),
+            scratch_path: Some(format!("{}/tunnel/req10", crate::CACHE_DIR)),
+        };
+        let bytes = serde_json::to_vec(&msg).unwrap();
+        let mut hasher = Hasher::new();
+        hasher.update(&bytes);
+        let crc32 = hasher.finalize();
+
+        let frame = serde_json::json!({
+            "channel": "command",
+            "schema_version": COMMAND_SCHEMA_VERSION,
+            "message": msg,
+            "crc32": crc32,
+        });
+        let raw = serde_json::to_string(&frame).unwrap();
+        let err = decode_command_frame(&raw).unwrap_err();
+        assert!(format!("{err}").contains("command must not be empty"));
     }
 
     #[test]

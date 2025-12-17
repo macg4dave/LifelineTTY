@@ -72,6 +72,11 @@ impl<B: I2cBus> Hd44780<B> {
         };
 
         driver.bus.write_byte(driver.addr, 0)?;
+        // Power-on wait.
+        // The HD44780 spec requires an initial delay after VCC rises before the first
+        // Function Set sequence; this mirrors the reference python_lcd implementation.
+        // See `docs/HD44780_specs.pdf` (initialization/timing guidance; AC characteristics tables
+        // show sub-microsecond bus timing minima, so millisecond-scale sleeps are conservative).
         sleep_ms(20);
         // Reset sequence: 3x reset nibble, then function nibble.
         driver.write_init_nibble(LCD_FUNCTION_RESET)?;
@@ -150,6 +155,11 @@ impl<B: I2cBus> Hd44780<B> {
     pub fn move_to(&mut self, cursor_x: u8, cursor_y: u8) -> Result<()> {
         self.cursor_x = cursor_x;
         self.cursor_y = cursor_y % self.rows.max(1);
+
+        // HD44780 DDRAM row mapping:
+        // - Primary 16×2: row0 offset 0x00, row1 offset 0x40.
+        // - Common 4-line modules map rows 2/3 to +cols (non-linear DDRAM layout).
+        // This standard formula matches typical 16×2/20×4/16×4 glass.
         let mut addr = cursor_x & 0x3f;
         if self.cursor_y & 1 == 1 {
             addr += 0x40;
@@ -220,6 +230,9 @@ impl<B: I2cBus> Hd44780<B> {
     pub fn custom_char(&mut self, location: u8, pattern: &[u8; 8]) -> Result<()> {
         let loc = location & 0x7;
         self.write_command(LCD_CGRAM | (loc << 3))?;
+        // Table 6 lists most instruction execution times as 37 µs max at the reference oscillator
+        // frequency (and notes the value scales with controller clock). Sleeping ~40 µs is a
+        // conservative, spec-aligned fixed delay for CGRAM writes.
         sleep_us(40);
         for byte in pattern {
             self.write_data(*byte)?;
@@ -258,6 +271,11 @@ impl<B: I2cBus> Hd44780<B> {
         self.write_nibble(cmd << 4, false)?;
         if cmd <= 3 {
             // HOME/CLEAR need extra delay.
+            // We do not read the busy flag (RW is not wired on most PCF8574 backpacks),
+            // so we use conservative fixed delays.
+            // Spec note: Table 6 shows Clear Display / Return Home as 1.52 ms max at the reference
+            // oscillator frequency (see `docs/HD44780_specs.pdf`, pages 24–25). Using 5 ms keeps us
+            // safely above that without relying on BF polling.
             sleep_ms(5);
         }
         Ok(())

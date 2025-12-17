@@ -239,30 +239,36 @@ impl CommandExecutor {
                         let tx = self.outgoing_tx.clone();
                         let stdout_seq = Arc::new(AtomicU32::new(0));
                         let stderr_seq = Arc::new(AtomicU32::new(0));
-                        if let Some(stdout) = child.stdout.take() {
+                        let stdout_handle = child.stdout.take().map(|stdout| {
                             spawn_stream_reader(
                                 stdout,
                                 CommandStream::Stdout,
                                 request_id,
                                 stdout_seq,
                                 tx.clone(),
-                            );
-                        }
-                        if let Some(stderr) = child.stderr.take() {
+                            )
+                        });
+                        let stderr_handle = child.stderr.take().map(|stderr| {
                             spawn_stream_reader(
                                 stderr,
                                 CommandStream::Stderr,
                                 request_id,
                                 stderr_seq,
                                 tx.clone(),
-                            );
-                        }
+                            )
+                        });
                         let tx_exit = self.outgoing_tx.clone();
                         thread::spawn(move || {
                             let code = match child.wait() {
                                 Ok(status) => status.code().unwrap_or(-1),
                                 Err(_) => -1,
                             };
+                            if let Some(handle) = stdout_handle {
+                                let _ = handle.join();
+                            }
+                            if let Some(handle) = stderr_handle {
+                                let _ = handle.join();
+                            }
                             let _ = tx_exit.send(CommandMessage::Exit { request_id, code });
                         });
                         Some(CommandMessage::Ack { request_id })
@@ -312,7 +318,8 @@ fn spawn_stream_reader<R>(
     request_id: u32,
     seq_counter: Arc<AtomicU32>,
     tx: Sender<CommandMessage>,
-) where
+) -> thread::JoinHandle<()>
+where
     R: Read + Send + 'static,
 {
     thread::spawn(move || {
@@ -336,7 +343,7 @@ fn spawn_stream_reader<R>(
                 Err(_) => break,
             }
         }
-    });
+    })
 }
 
 fn split_command_line(line: &str) -> std::result::Result<Vec<String>, String> {

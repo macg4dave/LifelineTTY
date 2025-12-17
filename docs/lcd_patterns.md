@@ -4,6 +4,9 @@ Every payload the daemon renders is just two lines of 5×8 characters, yet we ca
 amount of information onto the glass. This page collects proven layouts and the payload fields that
 enable them so you can script new behaviors without poking through the entire render loop.
 
+Note: These patterns are written **for the primary 16×2 target**. If you change `cols/rows` via config
+or CLI, expect to rework spacing and assumptions (especially bars + icon placement).
+
 ## Progress bars + dashboards
 
 - Use the `bar`, `bar_label`, `bar_line1`, and `bar_value` fields (see `payload/schema.rs`). The

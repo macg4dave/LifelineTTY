@@ -13,6 +13,8 @@ use crate::lcd_driver::{
 use linux_embedded_hal::I2cdev;
 #[cfg(target_os = "linux")]
 use rppal::i2c::I2c as RppalI2c;
+#[cfg(target_os = "linux")]
+use std::{collections::HashSet, path::PathBuf};
 
 pub const BAR_LEVELS: [char; 6] = ['\u{0}', '\u{1}', '\u{2}', '\u{3}', '\u{4}', '\u{5}'];
 pub const BAR_EMPTY: char = BAR_LEVELS[0];
@@ -55,6 +57,44 @@ const PCF8574_ADDR_CANDIDATES: [u8; 8] = [0x27, 0x26, 0x25, 0x24, 0x23, 0x22, 0x
 
 #[cfg(target_os = "linux")]
 const I2CDEV_PATHS: [&str; 2] = ["/dev/i2c-1", "/dev/i2c-0"];
+
+#[cfg(target_os = "linux")]
+fn discover_i2cdev_paths(dev_dir: &std::path::Path) -> Vec<PathBuf> {
+    // Keep the old, Pi-friendly defaults first, then fall back to scanning /dev for
+    // other hosts (x86 servers, SBCs, USB-I2C adapters) where the bus number may not
+    // be 0 or 1.
+    let mut out: Vec<PathBuf> = I2CDEV_PATHS.iter().map(PathBuf::from).collect();
+    let mut seen: HashSet<PathBuf> = out.iter().cloned().collect();
+
+    let entries = match std::fs::read_dir(dev_dir) {
+        Ok(entries) => entries,
+        Err(_) => return out,
+    };
+
+    let mut discovered: Vec<(u32, PathBuf)> = Vec::new();
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        let Some(name) = file_name.to_str() else {
+            continue;
+        };
+        let Some(suffix) = name.strip_prefix("i2c-") else {
+            continue;
+        };
+        let Ok(bus_num) = suffix.parse::<u32>() else {
+            continue;
+        };
+        discovered.push((bus_num, dev_dir.join(name)));
+    }
+
+    discovered.sort_by_key(|(n, _)| *n);
+    for (_, path) in discovered {
+        if seen.insert(path.clone()) {
+            out.push(path);
+        }
+    }
+
+    out
+}
 
 struct StubState {
     last_lines: (String, String),
@@ -534,15 +574,25 @@ impl DriverBackend {
     }
 
     fn open_i2cdev_bus() -> Result<I2cdevBus> {
-        let mut last_error: Option<Error> = None;
-        for path in I2CDEV_PATHS {
-            match I2cdevBus::from_path(path) {
+        let mut failures: Vec<String> = Vec::new();
+        let candidates = discover_i2cdev_paths(std::path::Path::new("/dev"));
+
+        for path in candidates {
+            match I2cdevBus::from_path(&path) {
                 Ok(bus) => return Ok(bus),
-                Err(err) => last_error = Some(err),
+                Err(err) => failures.push(format!("{}: {err}", path.display())),
             }
         }
-        Err(last_error
-            .unwrap_or_else(|| Error::InvalidArgs("no accessible i2c-dev bus found".into())))
+
+        let tried = if failures.is_empty() {
+            "(no candidates discovered)".to_string()
+        } else {
+            failures.join("; ")
+        };
+
+        Err(Error::Io(std::io::Error::other(format!(
+            "no accessible i2c-dev bus found; tried: {tried}. Hint: if you are running on a headless server/CI host without an LCD, set 'lcd_present = false' in ~/.serial_lcd/config.toml. Otherwise, ensure i2c-dev is enabled and you have permission to open /dev/i2c-* (often via the 'i2c' group)."
+        ))))
     }
 
     fn clear(&mut self) -> Result<()> {
@@ -587,6 +637,49 @@ impl DriverBackend {
             DriverBackend::Internal(driver) => driver.custom_char(slot, bitmap),
             DriverBackend::External(driver) => driver.custom_char(slot, bitmap),
         }
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod i2cdev_discovery_tests {
+    use super::discover_i2cdev_paths;
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        std::env::temp_dir().join(format!("lifelinetty_{name}_{stamp}"))
+    }
+
+    #[test]
+    fn discover_orders_and_filters_bus_numbers() {
+        let dir = temp_dir("i2cdev_discovery");
+        fs::create_dir_all(&dir).unwrap();
+
+        // Fake device nodes as regular files; we only test discovery + ordering.
+        fs::write(dir.join("i2c-10"), "").unwrap();
+        fs::write(dir.join("i2c-2"), "").unwrap();
+        fs::write(dir.join("i2c-0"), "").unwrap();
+        fs::write(dir.join("i2c-xyz"), "").unwrap();
+        fs::write(dir.join("not-i2c-3"), "").unwrap();
+
+        let paths = discover_i2cdev_paths(&dir);
+        let discovered: Vec<String> = paths
+            .into_iter()
+            .filter(|p| p.starts_with(&dir))
+            .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+
+        // Should include only numeric i2c-* entries and sorted by bus number.
+        assert_eq!(discovered, vec!["i2c-0", "i2c-2", "i2c-10"]);
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }
 

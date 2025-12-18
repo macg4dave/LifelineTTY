@@ -6,7 +6,7 @@ set -euo pipefail
 derive_arch_label() {
     local triple="${1:-}"
     case "${triple}" in
-        arm-unknown-linux-musleabihf) echo "armv6"; return ;;
+        arm-unknown-linux-gnueabihf) echo "armv6"; return ;;
         armv7-unknown-linux-gnueabihf) echo "armv7"; return ;;
         aarch64-unknown-linux-gnu) echo "arm64"; return ;;
     esac

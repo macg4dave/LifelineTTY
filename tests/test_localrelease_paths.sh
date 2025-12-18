@@ -40,6 +40,7 @@ TOOL
 done
 
 export PATH="$fake_path:$PATH"
+export LIFELINETTY_TEST_MODE=1
 
 echo "-- case: aarch64 host, rustup target not installed -> fallback to docker --"
 RUSTUP_INSTALLED=0 SKIP_BUILD_ACTIONS=1 bash "$ROOT/scripts/local-release.sh" --target aarch64-unknown-linux-gnu 2>&1 | tee "$TMP/out1.txt"

@@ -1,6 +1,6 @@
 BIN := lifelinetty
 SHELL := /usr/bin/env bash
-ARMV6_TARGET := arm-unknown-linux-musleabihf
+ARMV6_TARGET := arm-unknown-linux-gnueabihf
 ARMV7_TARGET := armv7-unknown-linux-gnueabihf
 AARCH64_TARGET := aarch64-unknown-linux-gnu
 OUT_ROOT := releases/debug
@@ -37,7 +37,7 @@ lint:
 # ARMv6 (Pi 1/Zero) release via Docker cross-build.
 armv6:
 	mkdir -p $(ARMV6_DIR)
-	docker buildx build --platform linux/arm/v6 --load \
+	docker buildx build --platform linux/arm/v6 --target artifact --load \
 		-f $(ARMV6_DOCKERFILE) \
 		-t $(ARMV6_DOCKER_IMAGE) \
 		.
@@ -50,11 +50,11 @@ armv7:
 	mkdir -p $(ARMV7_DIR)
 	@if [ "${FORCE_DOCKER:-}" = "1" ]; then \
 		echo "FORCE_DOCKER=1 set; using Docker for armv7"; \
-		docker buildx build --platform linux/arm/v7 --load -f $(ARMV7_DOCKERFILE) -t $(ARMV7_DOCKER_IMAGE) .; \
+			docker buildx build --platform linux/arm/v7 --target artifact --load -f $(ARMV7_DOCKERFILE) -t $(ARMV7_DOCKER_IMAGE) .; \
 		cid=$$(docker create $(ARMV7_DOCKER_IMAGE)); docker cp $$cid:/usr/local/bin/$(BIN) $(ARMV7_DIR)/; docker rm $$cid >/dev/null; \
 	elif [ "${USE_HOST_BUILD:-1}" = "0" ]; then \
 		echo "USE_HOST_BUILD=0 set; forcing Docker path for armv7"; \
-		docker buildx build --platform linux/arm/v7 --load -f $(ARMV7_DOCKERFILE) -t $(ARMV7_DOCKER_IMAGE) .; \
+			docker buildx build --platform linux/arm/v7 --target artifact --load -f $(ARMV7_DOCKERFILE) -t $(ARMV7_DOCKER_IMAGE) .; \
 		cid=$$(docker create $(ARMV7_DOCKER_IMAGE)); docker cp $$cid:/usr/local/bin/$(BIN) $(ARMV7_DIR)/; docker rm $$cid >/dev/null; \
 	elif uname -m | grep -Eq 'armv7|armv6'; then \
 		# Try a native (host) build for armv7 if rustup target exists; otherwise fall back to docker \
@@ -63,12 +63,12 @@ armv7:
 			cp target/$(ARMV7_TARGET)/release/$(BIN) $(ARMV7_DIR)/ || true; \
 		else \
 			echo "Rust target $(ARMV7_TARGET) not installed; falling back to Docker"; \
-			docker buildx build --platform linux/arm/v7 --load -f $(ARMV7_DOCKERFILE) -t $(ARMV7_DOCKER_IMAGE) .; \
+				docker buildx build --platform linux/arm/v7 --target artifact --load -f $(ARMV7_DOCKERFILE) -t $(ARMV7_DOCKER_IMAGE) .; \
 			cid=$$(docker create $(ARMV7_DOCKER_IMAGE)); docker cp $$cid:/usr/local/bin/$(BIN) $(ARMV7_DIR)/; docker rm $$cid >/dev/null; \
 		fi; \
 	else \
 		echo "Host architecture is not armv7 — using Docker cross-build"; \
-		docker buildx build --platform linux/arm/v7 --load -f $(ARMV7_DOCKERFILE) -t $(ARMV7_DOCKER_IMAGE) .; \
+			docker buildx build --platform linux/arm/v7 --target artifact --load -f $(ARMV7_DOCKERFILE) -t $(ARMV7_DOCKER_IMAGE) .; \
 		cid=$$(docker create $(ARMV7_DOCKER_IMAGE)); docker cp $$cid:/usr/local/bin/$(BIN) $(ARMV7_DIR)/; docker rm $$cid >/dev/null; \
 	fi
 
@@ -77,11 +77,11 @@ arm64:
 	mkdir -p $(AARCH64_DIR)
 	@if [ "${FORCE_DOCKER:-}" = "1" ]; then \
 		echo "FORCE_DOCKER=1 set; using Docker for arm64"; \
-		docker buildx build --platform linux/arm64/v8 --load -f $(ARM64_DOCKERFILE) -t $(ARM64_DOCKER_IMAGE) .; \
+		docker buildx build --platform linux/arm64/v8 --target artifact --load -f $(ARM64_DOCKERFILE) -t $(ARM64_DOCKER_IMAGE) .; \
 		cid=$$(docker create $(ARM64_DOCKER_IMAGE)); docker cp $$cid:/usr/local/bin/$(BIN) $(AARCH64_DIR)/; docker rm $$cid >/dev/null; \
 	elif [ "${USE_HOST_BUILD:-1}" = "0" ]; then \
 		echo "USE_HOST_BUILD=0 set; forcing Docker path for arm64"; \
-		docker buildx build --platform linux/arm64/v8 --load -f $(ARM64_DOCKERFILE) -t $(ARM64_DOCKER_IMAGE) .; \
+		docker buildx build --platform linux/arm64/v8 --target artifact --load -f $(ARM64_DOCKERFILE) -t $(ARM64_DOCKER_IMAGE) .; \
 		cid=$$(docker create $(ARM64_DOCKER_IMAGE)); docker cp $$cid:/usr/local/bin/$(BIN) $(AARCH64_DIR)/; docker rm $$cid >/dev/null; \
 	elif uname -m | grep -Eq 'aarch64|arm64'; then \
 		# Prefer native host build on aarch64 hosts when rustup target is installed \
@@ -90,12 +90,12 @@ arm64:
 			cp target/$(AARCH64_TARGET)/release/$(BIN)$(EXT) $(AARCH64_DIR)/ || true; \
 		else \
 			echo "Rust target $(AARCH64_TARGET) not installed; falling back to Docker"; \
-			docker buildx build --platform linux/arm64/v8 --load -f $(ARM64_DOCKERFILE) -t $(ARM64_DOCKER_IMAGE) .; \
+			docker buildx build --platform linux/arm64/v8 --target artifact --load -f $(ARM64_DOCKERFILE) -t $(ARM64_DOCKER_IMAGE) .; \
 			cid=$$(docker create $(ARM64_DOCKER_IMAGE)); docker cp $$cid:/usr/local/bin/$(BIN) $(AARCH64_DIR)/; docker rm $$cid >/dev/null; \
 		fi; \
 	else \
 		echo "Host architecture is not aarch64 — using Docker cross-build"; \
-		docker buildx build --platform linux/arm64/v8 --load -f $(ARM64_DOCKERFILE) -t $(ARM64_DOCKER_IMAGE) .; \
+		docker buildx build --platform linux/arm64/v8 --target artifact --load -f $(ARM64_DOCKERFILE) -t $(ARM64_DOCKER_IMAGE) .; \
 		cid=$$(docker create $(ARM64_DOCKER_IMAGE)); docker cp $$cid:/usr/local/bin/$(BIN) $(AARCH64_DIR)/; docker rm $$cid >/dev/null; \
 	fi
 

@@ -33,20 +33,13 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     cargo build --release --target=${TARGET}
 
-FROM --platform=linux/arm64/v8 debian:bookworm-slim AS runtime
+FROM --platform=linux/arm64/v8 scratch AS artifact
 ARG TARGET=aarch64-unknown-linux-gnu
 
-RUN dpkg --add-architecture arm64 \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends \
-        libgcc-s1:arm64 \
-        libstdc++6:arm64 \
-        libudev1:arm64 \
-        ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
+# NOTE: This stage is used by release tooling to `docker cp` the binary. Keeping
+# it as scratch avoids needing QEMU/binfmt emulation to run apt-get during build.
 COPY --from=builder /app/target/${TARGET}/release/lifelinetty /usr/local/bin/lifelinetty
 
-USER 1000:1000
+# Provide a default command so `docker create` works (we use it for `docker cp`).
 ENTRYPOINT ["/usr/local/bin/lifelinetty"]
-CMD ["--run"]
+CMD ["--version"]

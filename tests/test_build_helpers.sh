@@ -6,7 +6,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "${ROOT}/scripts/build_helpers.sh"
 
 echo "Testing derive_arch_label..."
-[[ "$(derive_arch_label arm-unknown-linux-musleabihf)" == "armv6" ]]
+[[ "$(derive_arch_label arm-unknown-linux-gnueabihf)" == "armv6" ]]
 [[ "$(derive_arch_label armv7-unknown-linux-gnueabihf)" == "armv7" ]]
 [[ "$(derive_arch_label aarch64-unknown-linux-gnu)" == "arm64" ]]
 [[ "$(derive_arch_label "armv7-foo")" == "armv7" ]]

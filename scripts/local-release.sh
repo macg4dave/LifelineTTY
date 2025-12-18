@@ -11,13 +11,14 @@ Usage: scripts/local-release.sh [--target <triple>] [--targets <t1,t2>] [--all-t
   --target <triple>   Optional Rust target triple (can be repeated). Example:
                       armv7-unknown-linux-gnueabihf
   --targets <list>    Comma-separated list of target triples (overrides --target)
-  --all-targets       Build for host + armv6 + armv7 + arm64 (predefined list)
+    --all-targets       Build for x86_64 + armv6 + armv7 + arm64 (predefined list)
   --tag <git-tag>     Override release tag (default: v<Cargo version>)
   --upload            Push artifacts to GitHub Releases using the GitHub CLI.
   --all               Convenience: build + package + upload (same as passing --upload).
   -h, --help          Show this message.
 
-Prereqs: cargo, cargo-deb, cargo-generate-rpm, python3, and optionally the gh CLI.
+Prereqs: cargo, cargo-deb, cargo-generate-rpm, and optionally python3 + the gh CLI.
+Version detection prefers `cargo metadata` + python3, and falls back to parsing Cargo.toml.
 For cross builds via Docker, you also need Docker BuildKit/buildx.
 EOF
 }
@@ -29,13 +30,107 @@ require_cmd() {
     fi
 }
 
+is_elf_binary() {
+    local path="$1"
+    if [[ ! -f "${path}" ]]; then
+        return 1
+    fi
+    # Check ELF magic bytes: 0x7F 45 4C 46
+    # Avoid external deps like `file` so tests can mock binaries.
+    local magic
+    magic="$(head -c 4 "${path}" 2>/dev/null | od -An -t x1 2>/dev/null | tr -d ' \n')"
+    [[ "${magic}" == "7f454c46" ]]
+}
+
+strip_binary_if_possible() {
+    local path="$1"
+
+    # Only strip real ELF binaries. Tests create text placeholders.
+    if ! is_elf_binary "${path}"; then
+        return 0
+    fi
+
+    local strip_tool=""
+    if command -v llvm-strip >/dev/null 2>&1; then
+        strip_tool="llvm-strip"
+    elif command -v strip >/dev/null 2>&1; then
+        strip_tool="strip"
+    fi
+
+    if [[ -z "${strip_tool}" ]]; then
+        echo "Warning: no strip tool found (install binutils or llvm); leaving ${path} unstripped" >&2
+        return 0
+    fi
+
+    # Strip debug symbols; keep the binary otherwise intact.
+    if ! "${strip_tool}" --strip-debug "${path}" >/dev/null 2>&1; then
+        echo "Warning: ${strip_tool} failed on ${path}; leaving unstripped" >&2
+        return 0
+    fi
+}
+
+get_crate_version() {
+    local version=""
+
+    # Prefer cargo metadata (more robust in workspaces), but don't hard-fail if python3
+    # isn't available; fall back to parsing Cargo.toml.
+    if command -v cargo >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
+        if version="$(
+            cargo metadata --no-deps --format-version 1 2>/dev/null |
+                python3 -c '
+import json, sys
+meta = json.load(sys.stdin)
+for pkg in meta.get("packages", []):
+    if pkg.get("name") == "lifelinetty":
+        print(pkg.get("version"))
+        sys.exit(0)
+print("Failed to find lifelinetty in cargo metadata", file=sys.stderr)
+sys.exit(1)
+' 2>/dev/null
+        )"; then
+            :
+        else
+            version=""
+        fi
+    fi
+
+    if [[ -z "${version}" ]]; then
+        # Parse Cargo.toml for [package] version = "...".
+        version="$(awk '
+            $0 ~ /^\[package\][[:space:]]*$/ { in_pkg = 1; next }
+            in_pkg && $0 ~ /^\[/ { in_pkg = 0 }
+            in_pkg && $0 ~ /^version[[:space:]]*=/ {
+                v = $0
+                sub(/^version[[:space:]]*=[[:space:]]*/, "", v)
+                sub(/#.*/, "", v)
+                gsub(/[[:space:]]/, "", v)
+                gsub(/^"|"$/, "", v)
+                print v
+                exit
+            }
+        ' "${ROOT}/Cargo.toml")"
+    fi
+
+    if [[ -z "${version}" ]]; then
+        echo "Could not determine crate version" >&2
+        return 1
+    fi
+
+    printf '%s\n' "${version}"
+}
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Always run from the repository root so `cargo*` tools can find Cargo.toml even
+# when this script is invoked from another working directory (e.g. ./scripts).
+cd "${ROOT}"
+
 TARGETS=()
 TAG_OVERRIDE=""
 UPLOAD=0
 ALL_TARGETS=0
 UPLOAD_ASSETS=()
-ALL_TARGETS_DEFAULT=("" "arm-unknown-linux-musleabihf" "armv7-unknown-linux-gnueabihf" "aarch64-unknown-linux-gnu")
+ALL_TARGETS_DEFAULT=("x86_64-unknown-linux-gnu" "arm-unknown-linux-gnueabihf" "armv7-unknown-linux-gnueabihf" "aarch64-unknown-linux-gnu")
 
 # Load reusable build helpers (derive_arch_label, is_inside_container, has_rust_target_installed)
 source "${ROOT}/scripts/build_helpers.sh"
@@ -81,21 +176,8 @@ done
 require_cmd cargo
 require_cmd cargo-deb
 require_cmd cargo-generate-rpm
-require_cmd python3
 
-CRATE_VERSION="$(
-    cargo metadata --no-deps --format-version 1 |
-        python3 -c '
-import json, sys
-meta = json.load(sys.stdin)
-for pkg in meta.get("packages", []):
-    if pkg.get("name") == "lifelinetty":
-        print(pkg.get("version"))
-        sys.exit(0)
-print("Failed to find lifelinetty in cargo metadata", file=sys.stderr)
-sys.exit(1)
-'
-)"
+CRATE_VERSION="$(get_crate_version)"
 
 if [[ "${ALL_TARGETS}" -eq 1 ]]; then
     TARGETS=("${ALL_TARGETS_DEFAULT[@]}")
@@ -126,56 +208,55 @@ package_artifacts() {
     IFS=' ' read -r -a deb_args <<< "${deb_args_str}"
     IFS=' ' read -r -a rpm_args <<< "${rpm_args_str}"
 
-    local env_prefix=()
-    if [[ -n "${triple}" ]]; then
-        local env_var
-        env_var=$(echo "CARGO_TARGET_${triple}_STRIP" | tr '[:lower:]-' '[:upper:]_')
-        env_prefix+=("${env_var}=/bin/true")
-    fi
-
-    local strip_shim
-    strip_shim="$(mktemp -d)"
-    cat > "${strip_shim}/strip" <<'EOS'
-#!/bin/sh
-# Minimal strip shim that just copies input to requested output.
-out=""
-in=""
-while [ $# -gt 0 ]; do
-  case "$1" in
-    -o)
-      out="$2"
-      shift 2
-      ;;
-    *)
-      in="$1"
-      shift
-      ;;
-  esac
-done
-
-if [ -n "$out" ] && [ -n "$in" ] && [ -f "$in" ]; then
-  cp "$in" "$out"
-  exit 0
-fi
-
-# Fallback: if no -o provided, just succeed.
-exit 0
-EOS
-    chmod +x "${strip_shim}/strip"
-    local shimmed_path="${strip_shim}:$PATH"
-
     if [[ ! -f "${BIN_PATH}" ]]; then
         echo "Binary not found at ${BIN_PATH}" >&2
         exit 1
     fi
 
-    env ${env_prefix[@]+"${env_prefix[@]}"} PATH="${shimmed_path}" CARGO_PROFILE_RELEASE_STRIP=false cargo deb "${deb_args[@]}"
-    env ${env_prefix[@]+"${env_prefix[@]}"} PATH="${shimmed_path}" CARGO_PROFILE_RELEASE_STRIP=false cargo generate-rpm "${rpm_args[@]}"
+    # In real release runs we expect an actual ELF binary. Test scripts in this
+    # repo intentionally use placeholder files; they should set
+    # LIFELINETTY_TEST_MODE=1 to bypass this check.
+    if [[ "${LIFELINETTY_TEST_MODE:-0}" != "1" ]]; then
+        if ! is_elf_binary "${BIN_PATH}"; then
+            echo "Built artifact at ${BIN_PATH} is not an ELF binary." >&2
+            echo "Tip: remove target/ and rebuild (e.g. 'cargo clean'), or ensure you're not running with mocked build tools." >&2
+            exit 1
+        fi
+    fi
+
+    # Make the target binary real and small: strip when possible.
+    strip_binary_if_possible "${BIN_PATH}"
+
+    # Ensure the deb/rpm metadata paths (Cargo.toml) always point at the correct
+    # binary. For cross targets, stage the built binary into target/release.
+    local staged_backup=""
+    local staged_target="${ROOT}/target/release/lifelinetty"
+    mkdir -p "${ROOT}/target/release"
+    if [[ -n "${triple}" ]]; then
+        if [[ -f "${staged_target}" ]]; then
+            staged_backup="$(mktemp)"
+            cp "${staged_target}" "${staged_backup}"
+        fi
+        cp "${BIN_PATH}" "${staged_target}"
+    fi
+    # Also strip the staged path (host path used by packaging metadata) when it
+    # differs from BIN_PATH.
+    strip_binary_if_possible "${staged_target}"
+
+    # We strip ourselves above (only if ELF), so tell cargo-deb not to run strip.
+    cargo deb --no-strip "${deb_args[@]}"
+    cargo generate-rpm "${rpm_args[@]}"
 
     local DEB_PATH
     local RPM_PATH
-    DEB_PATH="$(ls -t "${DEB_DIR}"/lifelinetty_*.deb 2>/dev/null | head -n 1 || true)"
-    RPM_PATH="$(ls -t "${RPM_DIR}"/lifelinetty-*.rpm 2>/dev/null | head -n 1 || true)"
+    # cargo-deb and cargo-generate-rpm sometimes write to target/{debian,generate-rpm}
+    # even when --target is specified. Search both locations.
+    DEB_PATH="$(
+        ls -t "${DEB_DIR}"/lifelinetty_*.deb "${ROOT}/target/debian"/lifelinetty_*.deb 2>/dev/null | head -n 1 || true
+    )"
+    RPM_PATH="$(
+        ls -t "${RPM_DIR}"/lifelinetty-*.rpm "${ROOT}/target/generate-rpm"/lifelinetty-*.rpm 2>/dev/null | head -n 1 || true
+    )"
 
     if [[ -z "${DEB_PATH}" ]]; then
         echo "No .deb artifact found in ${DEB_DIR}" >&2
@@ -201,6 +282,17 @@ EOS
     echo "  $(basename "${RPM_OUT}")"
 
     UPLOAD_ASSETS+=("${BIN_OUT}" "${DEB_OUT}" "${RPM_OUT}")
+
+    # Restore any staged host-path binary after packaging so subsequent targets
+    # don't accidentally reuse it.
+    if [[ -n "${triple}" ]]; then
+        if [[ -n "${staged_backup}" ]]; then
+            cp "${staged_backup}" "${staged_target}" || true
+            rm -f "${staged_backup}" || true
+        else
+            rm -f "${staged_target}" || true
+        fi
+    fi
 }
 
 build_with_cargo() {
@@ -228,8 +320,31 @@ build_with_cargo() {
         echo "SKIP_BUILD_ACTIONS=1; skipping cargo build (test mode)"
         return 0
     fi
-    cargo build "${build_args[@]}"
-    package_artifacts "${triple}" "${arch_label}" "${target_dir}" "${deb_args[*]}" "${rpm_args[*]}"
+
+    local bin_path="${ROOT}/${target_dir}/release/lifelinetty"
+    local attempt
+    for attempt in 1 2; do
+        cargo build "${build_args[@]}"
+
+        if [[ "${LIFELINETTY_TEST_MODE:-0}" == "1" ]]; then
+            break
+        fi
+
+        if is_elf_binary "${bin_path}"; then
+            break
+        fi
+
+        if [[ "${attempt}" -eq 1 ]]; then
+            echo "Warning: ${bin_path} is not an ELF binary; cleaning and rebuilding (target/ may be polluted)." >&2
+            cargo clean >/dev/null 2>&1 || true
+            continue
+        fi
+
+        echo "Built artifact at ${bin_path} is not an ELF binary even after a clean rebuild." >&2
+        exit 1
+    done
+
+    package_artifacts "${triple}" "${arch_label}" "${target_dir}" "${deb_args[*]}" "${rpm_args[*]}" 
 }
 
 build_with_docker() {
@@ -249,8 +364,9 @@ build_with_docker() {
     mkdir -p "${release_dir}"
 
     echo "Building lifelinetty ${CRATE_VERSION} (${arch_label}) via Docker (${platform})..."
-    docker buildx build --platform "${platform}" --load -f "${dockerfile}" -t "${image}" "${ROOT}"
-    cid=$(docker create "${image}")
+    docker buildx build --platform "${platform}" --target artifact --load -f "${dockerfile}" -t "${image}" "${ROOT}"
+    local cid
+    cid="$(docker create "${image}")"
     docker cp "${cid}:/usr/local/bin/lifelinetty" "${release_dir}/lifelinetty"
     docker rm "${cid}" >/dev/null
 
@@ -269,7 +385,15 @@ for TARGET_TRIPLE in "${TARGETS[@]}"; do
         "")
             build_with_cargo "" "${arch_label}"
             ;;
-        arm-unknown-linux-musleabihf)
+        x86_64-unknown-linux-gnu)
+            if (uname -m | grep -Eq 'x86_64|amd64') && ! is_inside_container; then
+                echo "Detected x86_64 host — building natively with cargo"
+                build_with_cargo "" "${arch_label}"
+            else
+                build_with_docker "${TARGET_TRIPLE}" "${arch_label}" "linux/amd64" "docker/Dockerfile.amd64" "lifelinetty:amd64"
+            fi
+            ;;
+        arm-unknown-linux-gnueabihf)
             build_with_docker "${TARGET_TRIPLE}" "${arch_label}" "linux/arm/v6" "docker/Dockerfile.armv6" "lifelinetty:armv6"
             ;;
         armv7-unknown-linux-gnueabihf)

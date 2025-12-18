@@ -145,7 +145,7 @@ Examples:
 
 Key=value fallback (space-separated):
 
-```
+```text
 schema_version=1 line1=Hello line2=World
 ```
 
@@ -479,6 +479,23 @@ Gives you:
 ---
 
 ## Troubleshooting & Debugging
+
+### Running on a non‑Raspberry Pi (server/CI)
+
+If you run `lifelinetty` on a non‑Pi Linux host you may see:
+
+- `warning: rppal I2C init failed (io error: Unknown Raspberry Pi model); trying linux-embedded-hal`
+- followed by `lcd init failed: ...; fallback: ...`
+
+That’s expected:
+
+- `rppal` only recognizes Raspberry Pi hardware, so it fails on generic x86/VM hosts.
+- LifelineTTY then tries the kernel `i2c-dev` interface via `linux-embedded-hal`.
+
+What to do:
+
+- **Headless / no LCD attached** (recommended for CI and most servers): set `lcd_present = false` in `~/.serial_lcd/config.toml`.
+- **LCD attached to a non‑Pi Linux host**: ensure `/dev/i2c-*` exists and is accessible (often requires enabling `i2c-dev` and granting your user/service access to the `i2c` group).
 
 ### LCD is blank  
 

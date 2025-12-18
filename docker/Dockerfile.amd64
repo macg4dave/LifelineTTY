@@ -1,0 +1,36 @@
+# syntax=docker/dockerfile:1.6
+
+# Build Rust binary for linux/amd64 in a container (useful when running the
+# release script on non-amd64 hosts).
+ARG RUST_VERSION=1
+FROM --platform=$BUILDPLATFORM rust:${RUST_VERSION}-bookworm AS builder
+
+ARG TARGET=x86_64-unknown-linux-gnu
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        pkg-config \
+        libudev-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Ensure the target is available (usually already present on amd64, but keep it explicit).
+RUN rustup target add ${TARGET}
+
+WORKDIR /app
+COPY . .
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    cargo build --release --target=${TARGET}
+
+FROM --platform=linux/amd64 scratch AS artifact
+ARG TARGET=x86_64-unknown-linux-gnu
+
+# NOTE: This stage is used by release tooling to `docker cp` the binary.
+COPY --from=builder /app/target/${TARGET}/release/lifelinetty /usr/local/bin/lifelinetty
+
+# Provide a default command so `docker create` works (we use it for `docker cp`).
+ENTRYPOINT ["/usr/local/bin/lifelinetty"]
+CMD ["--version"]

@@ -47,9 +47,10 @@ scripts/local-release.sh --target armv7-unknown-linux-gnueabihf --upload
 ```
 
 Script flags:
+
 - `--target <triple>`: cross-compile/pack for another target (can be repeated)
 - `--targets <t1,t2>`: comma-separated list of targets
-- `--all-targets`: build host + armv6 + armv7 + arm64. The predefined set uses Docker Buildx for the ARM targets, so you don't need local cross toolchains.
+- `--all-targets`: build **x86_64 + armv6 + armv7 + arm64** (explicit target set). This is host-independent, so running on a Pi will still build an x86_64 artifact (via Docker Buildx). The predefined set uses Docker Buildx for non-native targets, so you don't need local cross toolchains.
   
   Note: the helper script now prefers a native/host build when possible. For example, on an aarch64 host the script will attempt a native cargo build for the aarch64 target when the corresponding rustup target is installed. This avoids running Docker when you're already on the correct hardware. The script still falls back to Docker when running inside a container, when the rustup target is missing, or when `FORCE_DOCKER=1` is set.
 
@@ -59,15 +60,16 @@ Script flags:
 - `--all`: convenience alias for `--upload` (build + package + upload in one go)
 
 Outputs in `releases/<version>/` are named like:
- - `lifelinetty_v0.5_armv6` (raw binary)
- - `lifelinetty_v0.5_armv6.deb`
- - `lifelinetty_v0.5_armv6.rpm`
+
+- `lifelinetty_v0.5_armv6` (raw binary)
+- `lifelinetty_v0.5_armv6.deb`
+- `lifelinetty_v0.5_armv6.rpm`
 
 Note: Cross targets must be installed and have working linkers. For example:
 
 ```sh
 # Only needed if you build cross-arch outside Docker
-rustup target add arm-unknown-linux-musleabihf armv7-unknown-linux-gnueabihf aarch64-unknown-linux-gnu
+rustup target add arm-unknown-linux-gnueabihf armv7-unknown-linux-gnueabihf aarch64-unknown-linux-gnu
 ```
 
 ## Publishing a GitHub release manually

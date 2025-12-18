@@ -93,7 +93,7 @@ pub fn encode_command_frame(msg: &CommandMessage) -> Result<String> {
         crc32,
     };
     let json = serde_json::to_string(&frame).map_err(|e| Error::Parse(format!("json: {e}")))?;
-    if json.as_bytes().len() > COMMAND_MAX_FRAME_BYTES {
+    if json.len() > COMMAND_MAX_FRAME_BYTES {
         return Err(Error::Parse(format!(
             "command frame exceeds {COMMAND_MAX_FRAME_BYTES} bytes"
         )));
@@ -102,7 +102,7 @@ pub fn encode_command_frame(msg: &CommandMessage) -> Result<String> {
 }
 
 pub fn decode_command_frame(raw: &str) -> Result<CommandMessage> {
-    if raw.as_bytes().len() > COMMAND_MAX_FRAME_BYTES {
+    if raw.len() > COMMAND_MAX_FRAME_BYTES {
         return Err(Error::Parse(format!(
             "command frame exceeds {COMMAND_MAX_FRAME_BYTES} bytes"
         )));
@@ -164,7 +164,7 @@ fn validate_command_message(msg: &CommandMessage) -> Result<()> {
 }
 
 fn validate_cache_path(path: &str) -> Result<()> {
-    if path.as_bytes().len() > COMMAND_MAX_SCRATCH_PATH_BYTES {
+    if path.len() > COMMAND_MAX_SCRATCH_PATH_BYTES {
         return Err(Error::Parse(format!(
             "scratch_path must be <= {COMMAND_MAX_SCRATCH_PATH_BYTES} bytes"
         )));
@@ -651,29 +651,23 @@ impl RenderFrame {
         if schema_version >= 1 {
             if payload.line1.chars().count() > MAX_LINE_LENGTH {
                 return Err(Error::Parse(format!(
-                    "line1 must be <= {} chars",
-                    MAX_LINE_LENGTH
+                    "line1 must be <= {MAX_LINE_LENGTH} chars"
                 )));
             }
             if payload.line2.chars().count() > MAX_LINE_LENGTH {
                 return Err(Error::Parse(format!(
-                    "line2 must be <= {} chars",
-                    MAX_LINE_LENGTH
+                    "line2 must be <= {MAX_LINE_LENGTH} chars"
                 )));
             }
             if let Some(icons) = &payload.icons {
                 if icons.len() > MAX_ICONS {
-                    return Err(Error::Parse(format!(
-                        "icons must be <= {} items",
-                        MAX_ICONS
-                    )));
+                    return Err(Error::Parse(format!("icons must be <= {MAX_ICONS} items")));
                 }
             }
             if let Some(label) = &payload.bar_label {
                 if label.chars().count() > MAX_BAR_LABEL_LENGTH {
                     return Err(Error::Parse(format!(
-                        "bar_label must be <= {} chars",
-                        MAX_BAR_LABEL_LENGTH
+                        "bar_label must be <= {MAX_BAR_LABEL_LENGTH} chars"
                     )));
                 }
             }

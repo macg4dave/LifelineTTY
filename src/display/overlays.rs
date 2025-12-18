@@ -292,4 +292,16 @@ mod tests {
         let view = view_line(text, 6, 0, false);
         assert_eq!(view, "THI...");
     }
+
+    #[test]
+    fn overlay_icons_does_not_substitute_when_missing() {
+        let mut line1 = "LINE1".to_string();
+        let mut line2 = "LN2".to_string();
+        let palette = IconPalette::default();
+
+        overlay_icons(&mut line1, &mut line2, 6, &[Icon::Heart], None, &palette);
+
+        assert_eq!(line1, "LINE1");
+        assert_eq!(line2, "LN2");
+    }
 }

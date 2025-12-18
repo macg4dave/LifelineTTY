@@ -9,20 +9,15 @@ pub mod telemetry;
 use std::{fmt, str::FromStr};
 
 /// Flow control behavior applied to the UART link.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FlowControlMode {
     /// Do not use any flow control toggles.
+    #[default]
     None,
     /// Use XON/XOFF software bytes.
     Software,
     /// Use RTS/CTS hardware pins.
     Hardware,
-}
-
-impl Default for FlowControlMode {
-    fn default() -> Self {
-        FlowControlMode::None
-    }
 }
 
 impl FromStr for FlowControlMode {
@@ -51,20 +46,15 @@ impl fmt::Display for FlowControlMode {
 }
 
 /// Parity settings for the UART link.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ParityMode {
     /// No parity check.
+    #[default]
     None,
     /// Odd parity.
     Odd,
     /// Even parity.
     Even,
-}
-
-impl Default for ParityMode {
-    fn default() -> Self {
-        ParityMode::None
-    }
 }
 
 impl FromStr for ParityMode {
@@ -91,18 +81,13 @@ impl fmt::Display for ParityMode {
 }
 
 /// Number of stop bits appended to each frame.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StopBitsMode {
     /// Single stop bit (default).
+    #[default]
     One,
     /// Two stop bits.
     Two,
-}
-
-impl Default for StopBitsMode {
-    fn default() -> Self {
-        StopBitsMode::One
-    }
 }
 
 impl FromStr for StopBitsMode {
@@ -127,20 +112,15 @@ impl fmt::Display for StopBitsMode {
 }
 
 /// Whether to toggle DTR when opening the port.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DtrBehavior {
     /// Leave the driver behavior unchanged (default).
+    #[default]
     Preserve,
     /// Force DTR high when opening.
     Assert,
     /// Force DTR low when opening.
     Deassert,
-}
-
-impl Default for DtrBehavior {
-    fn default() -> Self {
-        DtrBehavior::Preserve
-    }
 }
 
 impl FromStr for DtrBehavior {

@@ -42,6 +42,7 @@ use crate::{
     Error, Result, CACHE_DIR,
 };
 use crc32fast::Hasher;
+use serde::Serialize;
 
 const HEARTBEAT_GRACE_MS: u64 = 5_000;
 const HEARTBEAT_BLINK_MS: u64 = 1_000;
@@ -141,13 +142,13 @@ impl ProtocolErrorLog {
         Self { path }
     }
 
-    fn log(&self, err: &Error, payload: &str, logger: &Logger) {
-        if let Err(write_err) = self.append(err, payload) {
+    fn log(&self, err: &Error, payload: &str, crc32: u32, logger: &Logger) {
+        if let Err(write_err) = self.append(err, payload, crc32) {
             logger.debug(format!("protocol error log write failed: {write_err}"));
         }
     }
 
-    fn append(&self, err: &Error, payload: &str) -> std::io::Result<()> {
+    fn append(&self, err: &Error, payload: &str, crc32: u32) -> std::io::Result<()> {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -160,13 +161,45 @@ impl ProtocolErrorLog {
             .create(true)
             .append(true)
             .open(&self.path)?;
-        writeln!(
-            file,
-            "error={} payload={}",
-            err,
-            payload.replace('\n', "\\n")
-        )
+
+        #[derive(Serialize)]
+        struct ProtocolErrorEntry {
+            error: String,
+            len: usize,
+            crc32: String,
+            preview: String,
+            payload: String,
+        }
+
+        let entry = ProtocolErrorEntry {
+            error: err.to_string(),
+            len: payload.len(),
+            crc32: format!("{crc32:08x}"),
+            preview: preview_frame(payload, 160),
+            payload: truncate_for_log(payload, 512),
+        };
+
+        let line =
+            serde_json::to_string(&entry).unwrap_or_else(|_| format!("{{\"error\":\"{err}\"}}"));
+        writeln!(file, "{line}")
     }
+}
+
+fn truncate_for_log(value: &str, max_chars: usize) -> String {
+    let mut out = String::new();
+    for (seen, ch) in value.chars().enumerate() {
+        if seen >= max_chars {
+            out.push('…');
+            break;
+        }
+        // Avoid embedding control characters in logs.
+        if ch.is_ascii_control() {
+            out.push(' ');
+        } else {
+            out.push(ch);
+        }
+    }
+    out
 }
 
 #[derive(Default)]
@@ -198,7 +231,7 @@ fn log_icon_fallbacks(logger: &Logger, palette: Option<IconPalette>) {
         .collect::<Vec<_>>()
         .join(", ");
     logger.debug(format!(
-        "icon bank saturated; falling back to ASCII for [{joined}]"
+        "icon bank saturated; leaving blanks for missing icons [{joined}]"
     ));
 }
 
@@ -234,6 +267,7 @@ fn compression_policy_from_config(config: &AppConfig) -> CompressionPolicy {
 }
 
 /// Drive the main render loop: reads serial, rotates pages, scrolls text, handles reconnects.
+#[allow(clippy::too_many_arguments)] // Wiring layer; keeping args explicit avoids hidden global state.
 pub(super) fn run_render_loop(
     lcd: &mut Lcd,
     config: &mut AppConfig,
@@ -546,6 +580,17 @@ pub(super) fn run_render_loop(
                                 }
                                 continue;
                             }
+                            if !looks_like_payload_frame(line) {
+                                // Ignore obvious garbage/diagnostic chatter (e.g., "INIT", noise
+                                // bytes that survived UTF-8 decoding, etc.) so we don't spam the LCD
+                                // with parse errors.
+                                logger.debug(format!(
+                                    "ignoring non-payload serial frame len={} preview={}",
+                                    line.len(),
+                                    preview_frame(line, 80)
+                                ));
+                                continue;
+                            }
                             let mut hasher = Hasher::new();
                             hasher.update(line.as_bytes());
                             let crc = hasher.finalize();
@@ -682,7 +727,7 @@ pub(super) fn run_render_loop(
                                         stats.checksum_failures += 1;
                                     }
                                     if matches!(err, Error::Parse(_)) {
-                                        protocol_errors.log(&err, line, logger);
+                                        protocol_errors.log(&err, line, crc, logger);
                                     }
                                     logger.warn(format!("frame error: {err}"));
                                     render_parse_error(lcd, config.cols, &err)?;
@@ -848,6 +893,131 @@ fn looks_like_command_frame(line: &str) -> bool {
     line.contains("\"channel\":\"command\"") && line.contains("\"crc32\"")
 }
 
+fn looks_like_payload_frame(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    // Never treat tunnel/command frames as display payloads.
+    if looks_like_tunnel_frame(trimmed) || looks_like_command_frame(trimmed) {
+        return false;
+    }
+    // Display payloads are either JSON objects or `key=value` pairs.
+    trimmed.starts_with('{') || trimmed.contains('=')
+}
+
+fn preview_frame(line: &str, max_chars: usize) -> String {
+    let mut out = String::new();
+    for ch in line.chars().take(max_chars) {
+        if ch.is_ascii_control() {
+            out.push(' ');
+        } else {
+            out.push(ch);
+        }
+    }
+    if line.chars().count() > max_chars {
+        out.push('…');
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Error;
+    use serde_json::Value;
+    use std::fs;
+
+    fn unique_protocol_error_log_path() -> PathBuf {
+        let pid = std::process::id();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+
+        let filename = format!("protocol_errors_{pid}_{nanos}.log");
+        let cache_tests = PathBuf::from(CACHE_DIR).join("tests");
+        if fs::create_dir_all(&cache_tests).is_ok() {
+            cache_tests.join(filename)
+        } else {
+            std::env::temp_dir().join(filename)
+        }
+    }
+
+    #[test]
+    fn protocol_error_log_records_len_crc32_preview_and_payload() {
+        let path = unique_protocol_error_log_path();
+        let _ = fs::remove_file(&path);
+
+        let log = ProtocolErrorLog { path: path.clone() };
+        let mut payload = "A".repeat(700);
+        payload.push('\u{0}');
+        payload.push_str("TAIL");
+
+        let mut hasher = Hasher::new();
+        hasher.update(payload.as_bytes());
+        let crc = hasher.finalize();
+
+        log.append(&Error::Parse("json: expected value".into()), &payload, crc)
+            .unwrap();
+
+        let contents = fs::read_to_string(&path).unwrap();
+        let first_line = contents.lines().next().unwrap();
+        let parsed: Value = serde_json::from_str(first_line).unwrap();
+
+        assert_eq!(parsed["len"].as_u64().unwrap() as usize, payload.len());
+        assert_eq!(parsed["crc32"].as_str().unwrap(), format!("{crc:08x}"));
+        assert!(parsed["preview"].as_str().unwrap().chars().count() <= 161); // 160 + optional ellipsis
+        assert!(parsed["error"].as_str().unwrap().contains("parse error"));
+
+        let logged_payload = parsed["payload"].as_str().unwrap();
+        assert!(logged_payload.chars().count() <= 513); // 512 + optional ellipsis
+        assert!(
+            !logged_payload.chars().any(|c| c.is_ascii_control()),
+            "control characters must be scrubbed"
+        );
+
+        // Best-effort cleanup.
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn payload_probe_accepts_json_and_kv() {
+        assert!(looks_like_payload_frame(
+            r#"{"schema_version":1,"line1":"A","line2":"B"}"#
+        ));
+        assert!(looks_like_payload_frame(
+            "schema_version=1 line1=Hello line2=World"
+        ));
+        assert!(looks_like_payload_frame("  schema_version=1 line1=Hello  "));
+    }
+
+    #[test]
+    fn payload_probe_rejects_empty_garbage_and_control_frames() {
+        assert!(!looks_like_payload_frame(""));
+        assert!(!looks_like_payload_frame("\r\n\t  "));
+        assert!(!looks_like_payload_frame("INIT"));
+        assert!(!looks_like_payload_frame("\u{0}\u{1}\u{2}"));
+
+        // Tunnel and command frames are not display payloads.
+        assert!(!looks_like_payload_frame(
+            r#"{"msg":"heartbeat","crc32":123,"schema_version":1}"#
+        ));
+        assert!(!looks_like_payload_frame(
+            r#"{"channel":"command","schema_version":1,"message":{"type":"ack","request_id":1},"crc32":1}"#
+        ));
+    }
+
+    #[test]
+    fn preview_frame_strips_control_and_truncates() {
+        let p = preview_frame("a\u{0}b\u{1}c", 10);
+        assert_eq!(p, "a b c");
+
+        let p = preview_frame("abcdefghijk", 5);
+        assert_eq!(p, "abcde…");
+    }
+}
+
 fn flush_tunnel_messages(serial: &mut SerialPort, tunnel: &mut TunnelController, logger: &Logger) {
     while let Some(msg) = tunnel.next_outgoing() {
         send_tunnel_frame(serial, msg, logger);
@@ -953,12 +1123,12 @@ fn format_polling_lines(
     let disk = snapshot.disk_used_pct.round() as i32;
     let free_mb = snapshot
         .disk_available_kb
-        .map(|kb| (kb / 1024) as u64)
+        .map(|kb| kb / 1024)
         .map(|mb| format!("{mb}M"))
         .unwrap_or_else(|| "--".into());
     let temp = snapshot
         .temperature_c
-        .map(|c| format!("{:.0}C", c))
+        .map(|c| format!("{c:.0}C"))
         .unwrap_or_else(|| "--".into());
     let prefix = if serial_active { "" } else { "RC " };
     let line1 = fit_line(format!("{prefix}CPU{cpu:>3}% MEM{mem_pct:>3}%"), width);

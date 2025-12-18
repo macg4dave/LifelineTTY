@@ -94,8 +94,7 @@ impl I2cdevBus {
 
     pub fn detect_address(&mut self, candidates: &[u8], fallback: u8) -> u8 {
         for &addr in candidates {
-            if EmbeddedHal1I2c::<SevenBitAddress>::write(&mut self.inner, addr.into(), &[0]).is_ok()
-            {
+            if EmbeddedHal1I2c::<SevenBitAddress>::write(&mut self.inner, addr, &[0]).is_ok() {
                 return addr;
             }
         }
@@ -106,7 +105,7 @@ impl I2cdevBus {
 #[cfg(target_os = "linux")]
 impl I2cBus for I2cdevBus {
     fn write_byte(&mut self, addr: u8, byte: u8) -> Result<()> {
-        EmbeddedHal1I2c::<SevenBitAddress>::write(&mut self.inner, addr.into(), &[byte])
+        EmbeddedHal1I2c::<SevenBitAddress>::write(&mut self.inner, addr, &[byte])
             .map_err(map_i2cdev_err)
     }
 }

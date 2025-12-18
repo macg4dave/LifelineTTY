@@ -1,6 +1,6 @@
 use crate::CACHE_DIR;
 use serde::Serialize;
-use std::io::{self, ErrorKind, Write};
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -54,8 +54,7 @@ pub fn log_backoff_event(
         reason,
     };
 
-    let line =
-        serde_json::to_string(&entry).map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+    let line = serde_json::to_string(&entry).map_err(io::Error::other)?;
     let handle = get_file()?;
     if let Ok(mut file) = handle.lock() {
         writeln!(file, "{line}")?;
@@ -69,16 +68,13 @@ fn get_file() -> io::Result<&'static Mutex<std::fs::File>> {
         let _ = FILE_HANDLE.set(Ok(handle));
     }
 
-    let result_ref = FILE_HANDLE.get().ok_or_else(|| {
-        io::Error::new(
-            ErrorKind::Other,
-            "failed to initialize serial telemetry log handle",
-        )
-    })?;
+    let result_ref = FILE_HANDLE
+        .get()
+        .ok_or_else(|| io::Error::other("failed to initialize serial telemetry log handle"))?;
 
     match result_ref {
         Ok(m) => Ok(m),
-        Err(err) => Err(io::Error::new(io::ErrorKind::Other, err.to_string())),
+        Err(err) => Err(io::Error::other(err.to_string())),
     }
 }
 

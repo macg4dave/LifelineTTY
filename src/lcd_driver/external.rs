@@ -135,7 +135,7 @@ impl ExternalHd44780 {
 
     fn refresh_backlight(&self) -> Result<()> {
         let mut adapter = BacklightAwareAdapter::from_state(self.adapter_state.clone());
-        adapter.write(self.addr, &[0]).map_err(|e| e)
+        adapter.write(self.addr, &[0])
     }
 
     fn move_to(&mut self, cursor_x: u8, cursor_y: u8) -> Result<()> {
@@ -317,7 +317,7 @@ impl AdapterState {
                 bus.block_write(*first, rest).map_err(pcf8574::map_i2c_err)
             }
             AdapterBackend::I2cdev(dev) => {
-                EmbeddedHal1I2c::<SevenBitAddress>::write(dev, addr.into(), bytes)
+                EmbeddedHal1I2c::<SevenBitAddress>::write(dev, addr, bytes)
                     .map_err(pcf8574::map_i2cdev_err)
             }
             #[cfg(test)]

@@ -292,7 +292,7 @@ Stored at:
 ~/.serial_lcd/config.toml
 ```
 
-By default the daemon listens on `/dev/ttyUSB0` at 9600 8N1. LifelineTTY always starts at 9600 (the enforced minimum) before any higher-speed tuning happens, and the Milestone I first-run wizard now launches automatically the moment `~/.serial_lcd/config.toml` is missing. The wizard walks you through device selection, baud validation, LCD geometry, and role preference, then writes a summary to `/run/serial_lcd_cache/wizard/summary.log`. Edit the config (or pass CLI flags) to point at `/dev/ttyAMA0`, `/dev/ttyS0`, USB adapters, or any other TTY that exposes your sender, and re-run the wizard any time with `lifelinetty --wizard` if you want to revisit those choices.
+By default the daemon listens on `/dev/ttyUSB0` at 9600 8N1. LifelineTTY always starts at 9600 (the enforced minimum) before any higher-speed tuning happens, and the first-run wizard launches automatically the moment `~/.serial_lcd/config.toml` is missing. The wizard walks you through usage intent, LCD presence, device selection, baud validation, LCD geometry, and role preference, then appends a summary to `/run/serial_lcd_cache/wizard/summary.log` and a detailed transcript to `/run/serial_lcd_cache/wizard.log`. Edit the config (or pass CLI flags) to point at `/dev/ttyAMA0`, `/dev/ttyS0`, USB adapters, or any other TTY that exposes your sender, and re-run the wizard any time with `lifelinetty --wizard` if you want to revisit those choices.
 
 Example:
 
@@ -402,37 +402,47 @@ Need a quick, scriptable override without editing the config? Set `LIFELINETTY_D
 | `--wizard` | Run the guided first-run wizard even if a config already exists. | Automatically runs when `~/.serial_lcd/config.toml` is missing; also forceable via `LIFELINETTY_FORCE_WIZARD=1`. |
 | `--help` / `--version` | Display usage or the crate version. | Utility flags that never touch hardware. |
 
-### Guided first-run wizard (Milestone I)
+### Guided first-run wizard (Milestone 2)
 
-- **Auto-run trigger**: the wizard starts before any run/test mode whenever `~/.serial_lcd/config.toml` is missing. It records the serial device, highest stable baud, LCD geometry, and negotiation role preference, then persists those answers and writes a short transcript to `/run/serial_lcd_cache/wizard/summary.log`.
+- **Auto-run trigger**: the wizard starts before any run/test mode whenever `~/.serial_lcd/config.toml` is missing. It records the serial device, baud, LCD geometry, and negotiation role preference, then persists those answers and appends:
+  - summary: `/run/serial_lcd_cache/wizard/summary.log`
+  - transcript: `/run/serial_lcd_cache/wizard.log`
 - **Manual reruns**: invoke `lifelinetty --wizard` or set `LIFELINETTY_FORCE_WIZARD=1` to re-run the interview even when a config already exists. This is helpful after hardware moves or when testing new baud profiles.
-- **Headless + CI support**: when stdin is not a TTY (systemd, CI), the wizard auto-accepts safe defaults so the daemon can boot unattended. Provide `LIFELINETTY_WIZARD_SCRIPT=/path/to/answers.txt` with newline-delimited responses to script the prompts during testing. The first line now answers the new LCD-presence question (`y`/`n`).
+- **Headless + CI support**: when stdin is not a TTY (systemd, CI), the wizard auto-accepts safe defaults so the daemon can boot unattended. Provide `LIFELINETTY_WIZARD_SCRIPT=/path/to/answers.txt` with newline-delimited responses to script the prompts during testing.
+  - Script lines (in order):
+    1. usage intent (`server` / `client` / `standalone`)
+    2. LCD presence (`y`/`n`)
+    3. serial device path (or index from the printed list)
+    4. baud
+    5. probe device? (`y`/`n`)
+    6. LCD columns (skipped if LCD is absent)
+    7. LCD rows (skipped if LCD is absent)
+    8. role preference (`server`/`client`/`auto`)
+    9. show helper snippets? (`y`/`n`)
 - **LCD detection**: the wizard now asks up front whether an LCD is connected before touching the hardware; answering `n` saves a 2-row fallback configuration so the daemon keeps running without an attached display.
-- **LCD cues + logging**: prompts mirror onto the LCD (when available), and every outcome is appended to `/run/serial_lcd_cache/wizard/summary.log` for auditing alongside serial/log caches.
+- **LCD cues + logging**: prompts mirror onto the LCD (when available), and every outcome is appended to `/run/serial_lcd_cache/wizard/summary.log` (plus the full prompt transcript at `/run/serial_lcd_cache/wizard.log`) for auditing alongside serial/log caches.
 
-#### Wizard helper snippets (Milestone 2 planning)
+#### Wizard helper snippets (Milestone 2)
 
-The upcoming wizard refresh (see v0.2.0 roadmap Milestone 2) will surface opt-in text-only helpers during the interview. Nothing runs automatically—the wizard only shows you snippets you can paste yourself. Examples:
-
-- **Copy the binary to a Pi (client ➜ server):**
-
-  ```sh
-  scp lifelinetty pi@raspberrypi.local:/usr/local/bin/lifelinetty
-  scp ~/.serial_lcd/config.toml pi@raspberrypi.local:~/.serial_lcd/config.toml
-  ```
+The wizard can optionally surface opt-in text-only helpers during the interview. Nothing runs automatically—the wizard only shows you snippets you can paste yourself. Examples:
 
 - **Pull wizard/cache logs back to your laptop:**
 
   ```sh
-  scp -r pi@raspberrypi.local:/run/serial_lcd_cache/wizard pi-logs/
-  scp pi@raspberrypi.local:/run/serial_lcd_cache/serial_backoff.log pi-logs/
+  scp -r pi@raspberrypi.local:/run/serial_lcd_cache ./pi-logs/
   ```
 
 - **Tail logs over SSH inside tmux (leaves a session you can reattach):**
 
   ```sh
   ssh -t pi@raspberrypi.local \
-    'tmux new -A -s lifelinetty "cd /run/serial_lcd_cache && tail -F wizard/summary.log serial_backoff.log"'
+    'tmux new -A -s lifelinetty "cd /run/serial_lcd_cache && tail -F wizard.log wizard/summary.log serial_backoff.log"'
+  ```
+
+- **Restart the service after editing config:**
+
+  ```sh
+  ssh -t pi@raspberrypi.local 'sudo systemctl restart lifelinetty && sudo journalctl -u lifelinetty -f'
   ```
 
 All paths stay within `/run/serial_lcd_cache` or `~/.serial_lcd/config.toml`, matching the storage charter.

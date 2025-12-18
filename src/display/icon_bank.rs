@@ -100,6 +100,12 @@ pub struct IconBank {
     next_stamp: u64,
 }
 
+impl Default for IconBank {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IconBank {
     pub fn new() -> Self {
         Self {

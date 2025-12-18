@@ -51,17 +51,12 @@ impl FromStr for Role {
 }
 
 /// Preference hint used to nudge the election when both sides support negotiation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RolePreference {
     PreferServer,
     PreferClient,
+    #[default]
     NoPreference,
-}
-
-impl Default for RolePreference {
-    fn default() -> Self {
-        RolePreference::NoPreference
-    }
 }
 
 impl RolePreference {
@@ -102,7 +97,7 @@ impl FromStr for RolePreference {
 }
 
 /// Capability flags shared during the handshake.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Capabilities {
     pub supports_tunnel: bool,
     pub supports_compression: bool,
@@ -135,16 +130,6 @@ impl Capabilities {
             supports_tunnel: bits & Self::CMD_TUNNEL_V1 != 0,
             supports_compression: bits & Self::COMPRESSION_V1 != 0,
             supports_heartbeat: bits & Self::HEARTBEAT_V1 != 0,
-        }
-    }
-}
-
-impl Default for Capabilities {
-    fn default() -> Self {
-        Self {
-            supports_tunnel: false,
-            supports_compression: false,
-            supports_heartbeat: false,
         }
     }
 }

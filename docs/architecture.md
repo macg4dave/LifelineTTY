@@ -87,7 +87,9 @@ loop owns state, debounces identical frames, routes alerts to overlays, and comm
   exceeds these minimums.
 
 Reference: the bundled controller document at `docs/HD44780_specs.pdf` is kept in-repo so the
-addressing/timing assumptions above can be audited alongside the code.
+addressing/timing assumptions above can be audited alongside the code. For a short project-focused
+summary, see `docs/hd44780_quickref.md`.
+
 - **Support services**: polling agent (`src/app/polling.rs`), command tunnel (`src/app/command_tunnel/*`),
   compression helpers, telemetry exporters, and watchdogs. Each lives under `src/app/` and is gated
   behind roadmap flags.

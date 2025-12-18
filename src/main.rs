@@ -24,13 +24,16 @@ fn try_main() -> Result<()> {
             println!("{}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
-        Ok(Command::Run(opts)) => match opts.mode {
-            RunMode::Daemon => {
-                let app = App::from_options(opts)?;
-                app.run()
+        Ok(Command::Run(opts)) => {
+            let opts = *opts;
+            match opts.mode {
+                RunMode::Daemon => {
+                    let app = App::from_options(opts)?;
+                    app.run()
+                }
+                RunMode::SerialShell => run_serial_shell(opts),
             }
-            RunMode::SerialShell => run_serial_shell(opts),
-        },
+        }
         Err(err) => {
             Command::print_help();
             Err(err)

@@ -2,18 +2,10 @@ use crate::{Error, Result};
 use std::collections::HashMap;
 
 /// Config skeleton for polling profiles (P18)
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PollingProfiles {
     /// map of metric name to interval_ms
     pub profiles: HashMap<String, u64>,
-}
-
-impl Default for PollingProfiles {
-    fn default() -> Self {
-        Self {
-            profiles: HashMap::new(),
-        }
-    }
 }
 
 impl PollingProfiles {

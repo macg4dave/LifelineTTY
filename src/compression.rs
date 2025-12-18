@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 use zstd::stream::{Decoder as ZstdDecoder, Encoder as ZstdEncoder};
 
-const MAX_DECOMPRESSED_SIZE: usize = 1 * 1024 * 1024;
+const MAX_DECOMPRESSED_SIZE: usize = 1024 * 1024;
 
 /// Compression primitives for Milestone F / P14 (payload compression support).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,8 +95,7 @@ fn read_to_vec_limited(reader: &mut impl Read) -> Result<Vec<u8>> {
         let remaining = MAX_DECOMPRESSED_SIZE - output.len();
         if bytes > remaining {
             return Err(Error::Parse(format!(
-                "decompressed payload exceeded {} bytes limit",
-                MAX_DECOMPRESSED_SIZE
+                "decompressed payload exceeded {MAX_DECOMPRESSED_SIZE} bytes limit"
             )));
         }
         output.extend_from_slice(&buffer[..bytes]);

@@ -38,10 +38,6 @@ impl PollingHandle {
     pub fn receiver(&self) -> &Receiver<PollEvent> {
         &self.receiver
     }
-
-    pub fn stop(&self) {
-        self.running.store(false, Ordering::SeqCst);
-    }
 }
 
 impl Drop for PollingHandle {

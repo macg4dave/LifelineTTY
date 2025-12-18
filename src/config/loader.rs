@@ -168,7 +168,7 @@ timeout_ms = {}\n",
         config.negotiation.preference,
         config.negotiation.timeout_ms,
     );
-    let contents = format!("{contents}\ncommand_allowlist = {}\n", allowlist);
+    let contents = format!("{contents}\ncommand_allowlist = {allowlist}\n");
     fs::write(path, contents)?;
     Ok(())
 }
@@ -501,7 +501,7 @@ fn format_string_array(values: &[String]) -> String {
                     other => encoded.push(other),
                 }
             }
-            format!("\"{}\"", encoded)
+            format!("\"{encoded}\"")
         })
         .collect::<Vec<_>>()
         .join(", ");

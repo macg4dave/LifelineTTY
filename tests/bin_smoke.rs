@@ -82,7 +82,7 @@ fn install_default_wizard_script(home: &Path) -> EnvVarGuard {
     install_wizard_script(
         home,
         "wizard_defaults.txt",
-        "y\n/dev/ttyUSB0\n9600\n16\n2\nauto\n",
+        "standalone\ny\n/dev/ttyUSB0\n9600\nn\n16\n2\nauto\nn\n",
     )
 }
 
@@ -311,7 +311,7 @@ fn wizard_auto_runs_with_script_when_missing_config() {
         let _script_guard = install_wizard_script(
             home,
             "wizard_answers.txt",
-            "y\n/dev/ttyS9\n19200\n16\n2\nserver\n",
+            "server\ny\n/dev/ttyS9\n19200\nn\n16\n2\nserver\nn\n",
         );
 
         let app = App::from_options(RunOptions::default()).expect("wizard-driven app init failed");
@@ -342,7 +342,7 @@ cols = 20
         let _script_guard = install_wizard_script(
             home,
             "wizard_skip.txt",
-            "y\n/dev/ttyUSB9\n57600\n20\n4\nclient\n",
+            "standalone\ny\n/dev/ttyUSB9\n57600\nn\n20\n4\nclient\nn\n",
         );
 
         let app = App::from_options(RunOptions::default()).expect("app init failed");
@@ -371,7 +371,7 @@ cols = 20
         let _script_guard = install_wizard_script(
             home,
             "wizard_force.txt",
-            "y\n/dev/ttyACM1\n57600\n20\n4\nclient\n",
+            "client\ny\n/dev/ttyACM1\n57600\nn\n20\n4\nclient\nn\n",
         );
         let _force_guard = EnvVarGuard::set_str("LIFELINETTY_FORCE_WIZARD", "1");
 

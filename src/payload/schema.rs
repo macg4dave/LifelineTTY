@@ -78,7 +78,7 @@ pub fn encode_tunnel_msg(msg: &TunnelMsgOwned) -> Result<String> {
     let crc32 = msg.crc32()?;
     let frame = TunnelFrameWriter { msg, crc32 };
     let json = serde_json::to_string(&frame).map_err(|e| Error::Parse(format!("json: {e}")))?;
-    if json.as_bytes().len() > TUNNEL_MAX_FRAME_BYTES {
+    if json.len() > TUNNEL_MAX_FRAME_BYTES {
         return Err(Error::Parse(format!(
             "tunnel frame exceeds {TUNNEL_MAX_FRAME_BYTES} bytes"
         )));
@@ -87,7 +87,7 @@ pub fn encode_tunnel_msg(msg: &TunnelMsgOwned) -> Result<String> {
 }
 
 pub fn decode_tunnel_frame(raw: &str) -> Result<TunnelMsgOwned> {
-    if raw.as_bytes().len() > TUNNEL_MAX_FRAME_BYTES {
+    if raw.len() > TUNNEL_MAX_FRAME_BYTES {
         return Err(Error::Parse(format!(
             "tunnel frame exceeds {TUNNEL_MAX_FRAME_BYTES} bytes"
         )));

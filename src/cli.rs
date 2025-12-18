@@ -6,18 +6,13 @@ use crate::{
 };
 
 /// Entry mode for the `run` command.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RunMode {
     /// Default daemon path that renders onto the LCD.
+    #[default]
     Daemon,
     /// P7: CLI integration groundwork for the serial shell preview gate.
     SerialShell,
-}
-
-impl Default for RunMode {
-    fn default() -> Self {
-        RunMode::Daemon
-    }
 }
 
 /// Options for the `run` command; values are `None` when not provided on CLI.
@@ -51,7 +46,7 @@ pub struct RunOptions {
 /// Parsed command-line intent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
-    Run(RunOptions),
+    Run(Box<RunOptions>),
     ShowHelp,
     ShowVersion,
 }
@@ -59,12 +54,12 @@ pub enum Command {
 impl Command {
     pub fn parse(args: &[String]) -> Result<Self> {
         if args.is_empty() {
-            return Ok(Command::Run(RunOptions::default()));
+            return Ok(Command::Run(Box::default()));
         }
 
         let mut iter = args.iter();
         match iter.next().map(|s| s.as_str()) {
-            Some("run") => Ok(Command::Run(parse_run_options(&mut iter)?)),
+            Some("run") => Ok(Command::Run(Box::new(parse_run_options(&mut iter)?))),
             Some("--help") | Some("-h") => Ok(Command::ShowHelp),
             Some("--version") | Some("-V") => Ok(Command::ShowVersion),
             Some(flag) if flag.starts_with('-') => {
@@ -74,12 +69,12 @@ impl Command {
                 flags.push(flag.to_string());
                 flags.extend(iter.map(|s| s.to_string()));
                 let mut iter = flags.iter();
-                Ok(Command::Run(parse_run_options(&mut iter)?))
+                Ok(Command::Run(Box::new(parse_run_options(&mut iter)?)))
             }
             Some(cmd) => Err(Error::InvalidArgs(format!(
                 "unknown command '{cmd}', try --help"
             ))),
-            None => Ok(Command::Run(RunOptions::default())),
+            None => Ok(Command::Run(Box::default())),
         }
     }
     pub fn help() -> String {
@@ -259,7 +254,7 @@ mod tests {
     fn parse_defaults_with_no_args() {
         let args: Vec<String> = vec![];
         let cmd = Command::parse(&args).unwrap();
-        assert_eq!(cmd, Command::Run(RunOptions::default()));
+        assert_eq!(cmd, Command::Run(Box::default()));
     }
 
     #[test]
@@ -323,7 +318,7 @@ mod tests {
             wizard: false,
         };
         let cmd = Command::parse(&args).unwrap();
-        assert_eq!(cmd, Command::Run(expected));
+        assert_eq!(cmd, Command::Run(Box::new(expected)));
     }
 
     #[test]
@@ -360,7 +355,7 @@ mod tests {
             wizard: false,
         };
         let cmd = Command::parse(&args).unwrap();
-        assert_eq!(cmd, Command::Run(expected));
+        assert_eq!(cmd, Command::Run(Box::new(expected)));
     }
 
     #[test]
@@ -372,7 +367,7 @@ mod tests {
             ..Default::default()
         };
         let cmd = Command::parse(&args).unwrap();
-        assert_eq!(cmd, Command::Run(expected));
+        assert_eq!(cmd, Command::Run(Box::new(expected)));
     }
 
     #[test]
@@ -383,7 +378,7 @@ mod tests {
             ..Default::default()
         };
         let cmd = Command::parse(&args).unwrap();
-        assert_eq!(cmd, Command::Run(expected));
+        assert_eq!(cmd, Command::Run(Box::new(expected)));
     }
 
     #[test]
@@ -399,7 +394,7 @@ mod tests {
             ..Default::default()
         };
         let cmd = Command::parse(&args).unwrap();
-        assert_eq!(cmd, Command::Run(expected));
+        assert_eq!(cmd, Command::Run(Box::new(expected)));
     }
 
     #[test]
@@ -410,7 +405,7 @@ mod tests {
             ..Default::default()
         };
         let cmd = Command::parse(&args).unwrap();
-        assert_eq!(cmd, Command::Run(expected));
+        assert_eq!(cmd, Command::Run(Box::new(expected)));
     }
 
     #[test]

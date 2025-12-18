@@ -98,17 +98,12 @@ impl std::str::FromStr for Pcf8574Addr {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DisplayDriver {
+    #[default]
     Auto,
     InTree,
     Hd44780Driver,
-}
-
-impl Default for DisplayDriver {
-    fn default() -> Self {
-        DisplayDriver::Auto
-    }
 }
 
 impl std::str::FromStr for DisplayDriver {
@@ -279,8 +274,7 @@ pub(crate) fn validate(cfg: &Config) -> Result<()> {
     }
     if cfg.protocol.schema_version != DEFAULT_PROTOCOL_SCHEMA_VERSION {
         return Err(Error::InvalidArgs(format!(
-            "protocol.schema_version must be {}",
-            DEFAULT_PROTOCOL_SCHEMA_VERSION
+            "protocol.schema_version must be {DEFAULT_PROTOCOL_SCHEMA_VERSION}"
         )));
     }
     if cfg.serial_timeout_ms < MIN_SERIAL_TIMEOUT_MS
@@ -331,7 +325,7 @@ fn format_pcf_addr(addr: &Pcf8574Addr) -> String {
 }
 
 fn format_display_driver(driver: &DisplayDriver) -> String {
-    format!("\"{}\"", driver)
+    format!("\"{driver}\"")
 }
 
 #[cfg(test)]

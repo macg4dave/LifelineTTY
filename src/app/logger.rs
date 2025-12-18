@@ -131,8 +131,7 @@ fn validate_cache_path(path: &Path) -> AppResult<()> {
     let cache_root = Path::new(CACHE_DIR);
     if !path.starts_with(cache_root) {
         return Err(Error::InvalidArgs(format!(
-            "log file path must live inside {}",
-            CACHE_DIR
+            "log file path must live inside {CACHE_DIR}"
         )));
     }
 

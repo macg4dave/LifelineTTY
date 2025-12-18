@@ -11,17 +11,13 @@ use std::time::{Duration, Instant};
 
 struct NegotiationResult {
     role: Role,
-    remote_role: Option<Role>,
     remote_caps: Option<Capabilities>,
     fallback: bool,
-    pending_frame: Option<String>,
 }
 
 pub(crate) struct ConnectOutcome {
     pub port: SerialPort,
     pub remote_caps: Option<Capabilities>,
-    pub fallback: bool,
-    pub pending_frame: Option<String>,
 }
 
 /// Attempt to open the serial port, send the INIT handshake, and log outcomes.
@@ -33,11 +29,38 @@ pub(crate) fn attempt_serial_connect(
     compression_enabled: bool,
     log: &mut NegotiationLog,
 ) -> Result<ConnectOutcome, SerialFailureKind> {
-    match SerialPort::connect(device, options) {
+    attempt_serial_connect_with(
+        logger,
+        device,
+        options,
+        negotiation,
+        compression_enabled,
+        log,
+        SerialPort::connect,
+    )
+}
+
+fn attempt_serial_connect_with<F>(
+    logger: &Logger,
+    device: &str,
+    options: SerialOptions,
+    negotiation: &NegotiationConfig,
+    compression_enabled: bool,
+    log: &mut NegotiationLog,
+    connect: F,
+) -> Result<ConnectOutcome, SerialFailureKind>
+where
+    F: FnOnce(&str, SerialOptions) -> crate::Result<SerialPort>,
+{
+    match connect(device, options) {
         Ok(mut serial_connection) => {
             if let Err(err) = serial_connection.send_command_line("INIT") {
                 let reason = classify_error(&err);
-                logger.warn(format!("serial init failed [{reason}]: {err}; will retry"));
+                let hint = connect_failure_hint(reason, device);
+                let hint_suffix = hint.map(|h| format!("; hint: {h}")).unwrap_or_default();
+                logger.warn(format!(
+                    "serial init failed [{reason}]: {err}; will retry{hint_suffix}"
+                ));
                 return Err(reason);
             }
             logger.info("serial connected");
@@ -70,17 +93,26 @@ pub(crate) fn attempt_serial_connect(
             Ok(ConnectOutcome {
                 port: serial_connection,
                 remote_caps: negotiation_result.remote_caps,
-                fallback: negotiation_result.fallback,
-                pending_frame: negotiation_result.pending_frame,
             })
         }
         Err(err) => {
             let reason = classify_error(&err);
+            let hint = connect_failure_hint(reason, device);
+            let hint_suffix = hint.map(|h| format!("; hint: {h}")).unwrap_or_default();
             logger.warn(format!(
-                "serial connect failed [{reason}]: {err}; will retry"
+                "serial connect failed [{reason}]: {err}; will retry{hint_suffix}"
             ));
             Err(reason)
         }
+    }
+}
+
+fn connect_failure_hint(reason: SerialFailureKind, device: &str) -> Option<String> {
+    match reason {
+        SerialFailureKind::PermissionDenied => Some(format!(
+            "ensure the service user can read/write {device} (often add user to 'dialout' or adjust udev rules)"
+        )),
+        _ => None,
     }
 }
 
@@ -100,7 +132,7 @@ where
     if !send_control_frame(io, &hello_frame, "hello", logger, log) {
         logger.warn("negotiation: failed to send hello frame");
         log.record("negotiation: failed to send hello frame");
-        return fallback_result(None);
+        return fallback_result();
     }
 
     let deadline = Instant::now() + Duration::from_millis(config.timeout_ms);
@@ -148,7 +180,7 @@ where
                         if !send_control_frame(io, &ack, "hello_ack", logger, log) {
                             logger.warn("negotiation: failed to send hello_ack");
                             log.record("negotiation: failed to send hello_ack");
-                            return fallback_result(None);
+                            return fallback_result();
                         }
                         log.record(format!(
                             "negotiation: sent hello_ack remote_role={} local_role={}",
@@ -162,7 +194,6 @@ where
                         peer_caps,
                     }) => {
                         let role = Role::from_str(&chosen_role).unwrap_or(Role::Server);
-                        let remote_role = role.opposite();
                         log.record(format!(
                             "negotiation: hello_ack received role={} caps=0x{:08x}",
                             role.as_str(),
@@ -170,21 +201,19 @@ where
                         ));
                         return NegotiationResult {
                             role,
-                            remote_role: Some(remote_role),
                             remote_caps: Some(Capabilities::from_bits(peer_caps.bits)),
                             fallback: false,
-                            pending_frame: None,
                         };
                     }
                     Ok(ControlFrame::LegacyFallback) => {
                         log.record("negotiation: legacy_fallback received");
-                        return fallback_result(None);
+                        return fallback_result();
                     }
                     Err(_) => {
                         log.record(format!(
                             "negotiation: ignoring non-control frame during handshake: {trimmed}"
                         ));
-                        return fallback_result(Some(trimmed.to_string()));
+                        return fallback_result();
                     }
                 }
             }
@@ -196,7 +225,7 @@ where
         }
     }
 
-    log.record("negotiation: timed out".to_string());
+    log.record("negotiation: timed out");
     let _ = send_control_frame(
         io,
         &ControlFrame::LegacyFallback,
@@ -204,16 +233,14 @@ where
         logger,
         log,
     );
-    fallback_result(None)
+    fallback_result()
 }
 
-fn fallback_result(pending_frame: Option<String>) -> NegotiationResult {
+fn fallback_result() -> NegotiationResult {
     NegotiationResult {
         role: Role::Server,
-        remote_role: None,
         remote_caps: None,
         fallback: true,
-        pending_frame,
     }
 }
 
@@ -252,7 +279,10 @@ mod tests {
     use super::*;
     use crate::app::logger::{LogLevel, Logger};
     use crate::serial::LineIo;
+    use crate::Error;
     use std::collections::VecDeque;
+    use std::io;
+    use std::io::ErrorKind;
 
     struct FakeLineIo {
         responses: VecDeque<String>,
@@ -296,6 +326,32 @@ mod tests {
     }
 
     #[test]
+    fn connect_failure_hint_only_for_permission_denied() {
+        let hint = connect_failure_hint(SerialFailureKind::PermissionDenied, "/dev/ttyUSB0")
+            .expect("hint");
+        assert!(hint.contains("dialout") || hint.contains("udev"));
+        assert!(hint.contains("/dev/ttyUSB0"));
+
+        assert!(connect_failure_hint(SerialFailureKind::DeviceMissing, "/dev/ttyUSB0").is_none());
+    }
+
+    #[test]
+    fn connect_permission_denied_is_classified() {
+        let logger = new_logger();
+        let mut log = NegotiationLog::disabled();
+        let result = attempt_serial_connect_with(
+            &logger,
+            "/dev/ttyUSB0",
+            SerialOptions::default(),
+            &NegotiationConfig::default(),
+            false,
+            &mut log,
+            |_device, _options| Err(Error::Io(io::Error::new(ErrorKind::PermissionDenied, "no"))),
+        );
+        assert!(matches!(result, Err(SerialFailureKind::PermissionDenied)));
+    }
+
+    #[test]
     fn negotiation_success_sets_role() {
         let ack = r#"{"type":"hello_ack","chosen_role":"client","peer_caps":{"bits":3}}"#;
         let mut io = FakeLineIo::with_responses(vec![ack]);
@@ -310,7 +366,10 @@ mod tests {
         );
         assert!(!result.fallback);
         assert_eq!(result.role, Role::Client);
-        assert_eq!(result.remote_role, Some(Role::Server));
+        assert_eq!(
+            result.remote_caps.as_ref().map(|c| c.bits()).unwrap_or(0),
+            3
+        );
         assert!(io
             .sent()
             .iter()
@@ -352,6 +411,5 @@ mod tests {
             &mut log,
         );
         assert!(result.fallback);
-        assert_eq!(result.pending_frame.as_deref(), Some(unknown));
     }
 }

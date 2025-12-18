@@ -11,6 +11,8 @@ use std::{
     fs::{self, OpenOptions},
     io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
+    thread,
+    time::Duration,
     time::SystemTime,
 };
 
@@ -42,7 +44,7 @@ pub fn maybe_run(opts: &RunOptions) -> Result<()> {
     }
 
     let defaults = existing_cfg.unwrap_or_default();
-    let mut wizard = FirstRunWizard::new(config_path, defaults)?;
+    let mut wizard = FirstRunWizard::new(config_path, defaults, config_exists)?;
     wizard.run(prompt_input)
 }
 
@@ -84,34 +86,65 @@ fn determine_prompt_input() -> PromptInput {
 struct FirstRunWizard {
     config_path: PathBuf,
     defaults: Config,
+    has_existing_config: bool,
     summary: WizardSummary,
+    transcript: WizardTranscript,
 }
 
 impl FirstRunWizard {
-    fn new(config_path: PathBuf, defaults: Config) -> Result<Self> {
+    fn new(config_path: PathBuf, defaults: Config, has_existing_config: bool) -> Result<Self> {
         Ok(Self {
             config_path,
             defaults,
             summary: WizardSummary::new(),
+            has_existing_config,
+            transcript: WizardTranscript::new(),
         })
     }
 
     fn run(&mut self, input: PromptInput) -> Result<()> {
         let mut prompter = WizardPrompter::new(input);
+
+        let default_intent =
+            UsageIntent::from_role_preference(self.defaults.negotiation.preference);
+        let intent = prompt_usage_intent(&mut prompter, default_intent)?;
         let lcd_present = prompt_lcd_presence(&mut prompter)?;
         let mut display = WizardDisplay::new(&self.defaults, lcd_present);
         display.banner("First-run wizard", "Check console");
 
         let candidate_devices = self.device_candidates();
-        let answers =
-            self.collect_answers(&candidate_devices, &mut prompter, &mut display, lcd_present)?;
+        let answers = self.collect_answers(
+            &candidate_devices,
+            &mut prompter,
+            &mut display,
+            intent,
+            lcd_present,
+        )?;
         self.save_config(&answers)?;
 
-        let probes = run_probes(&answers.device, answers.baud);
+        let probes = if answers.run_probe {
+            run_probes(&answers.device, answers.baud)
+        } else {
+            Vec::new()
+        };
+
+        if answers.show_helpers {
+            print_wizard_helper_snippets();
+        }
+
         let mode_label = prompter.mode_label();
         let mode_note = prompter.mode_note().map(|s| s.to_string());
         self.summary.record(WizardSummaryEntry::new(
             mode_label, mode_note, &answers, &probes,
+        ));
+
+        self.transcript.record(WizardTranscriptEntry::new(
+            mode_label,
+            prompter.mode_note().map(|s| s.to_string()),
+            prompter.take_transcript(),
+            &answers,
+            &candidate_devices,
+            &probes,
         ));
 
         display.banner("Wizard complete", "Config saved");
@@ -134,10 +167,13 @@ impl FirstRunWizard {
         candidates: &[String],
         prompter: &mut WizardPrompter,
         display: &mut WizardDisplay,
+        intent: UsageIntent,
         lcd_present: bool,
     ) -> Result<WizardAnswers> {
         println!("\n=== LifelineTTY first-run wizard ===");
         println!("Answer the following prompts to finish setup. Press enter to accept the suggested value.");
+
+        println!("\nUsage intent: {}", intent.as_str());
 
         let default_device = candidates
             .first()
@@ -155,8 +191,15 @@ impl FirstRunWizard {
         let device = prompt_device(prompter, candidates, &default_device)?;
 
         let default_baud = self.defaults.baud.max(MIN_BAUD);
-        display.banner("Target baud", &format!("{} bps", default_baud));
+        display.banner("Target baud", &format!("{default_baud} bps"));
         let baud = prompt_baud(prompter, default_baud)?;
+
+        display.banner("Probe serial", "optional");
+        let run_probe = prompt_yes_no(
+            prompter,
+            "Probe the selected device at 9600 and the target baud (y/n)",
+            prompter.is_interactive(),
+        )?;
 
         let (cols, rows) = if lcd_present {
             display.banner("LCD columns", &format!("{} cols", self.defaults.cols));
@@ -176,7 +219,13 @@ impl FirstRunWizard {
         };
 
         display.banner("Role preference", "server/client/auto");
-        let preference = prompt_role(prompter, self.defaults.negotiation.preference)?;
+        let preference = prompt_role(prompter, intent.to_role_preference())?;
+
+        let show_helpers = prompt_yes_no(
+            prompter,
+            "Show helper snippets (ssh/scp/tmux) (y/n)",
+            prompter.is_interactive(),
+        )?;
 
         Ok(WizardAnswers {
             device,
@@ -185,15 +234,27 @@ impl FirstRunWizard {
             rows,
             preference,
             lcd_present,
+            intent,
+            run_probe,
+            show_helpers,
         })
     }
 
     fn device_candidates(&self) -> Vec<String> {
         let mut devices = Vec::new();
-        append_unique(&mut devices, self.defaults.device.clone());
-        for dev in enumerate_serial_devices() {
+
+        if self.has_existing_config {
+            append_unique(&mut devices, self.defaults.device.clone());
+        }
+
+        for dev in enumerate_serial_devices_ranked() {
             append_unique(&mut devices, dev);
         }
+
+        if !self.has_existing_config {
+            append_unique(&mut devices, self.defaults.device.clone());
+        }
+
         append_unique(&mut devices, DEFAULT_DEVICE.to_string());
         devices.retain(|d| !d.is_empty());
         devices
@@ -217,6 +278,9 @@ struct WizardAnswers {
     rows: u8,
     preference: RolePreference,
     lcd_present: bool,
+    intent: UsageIntent,
+    run_probe: bool,
+    show_helpers: bool,
 }
 
 fn run_probes(device: &str, target_baud: u32) -> Vec<ProbeResult> {
@@ -226,28 +290,51 @@ fn run_probes(device: &str, target_baud: u32) -> Vec<ProbeResult> {
     }
     let mut results = Vec::new();
     for rate in rates {
-        let mut opts = SerialOptions::default();
-        opts.baud = rate;
-        let result = match SerialPort::connect(device, opts) {
-            Ok(_) => ProbeResult {
-                baud: rate,
-                success: true,
-                message: "port opened successfully".to_string(),
-            },
-            Err(err) => ProbeResult {
-                baud: rate,
-                success: false,
-                message: err.to_string(),
-            },
-        };
-        results.push(result);
+        results.push(probe_with_backoff(device, rate));
     }
     results
+}
+
+fn probe_with_backoff(device: &str, baud: u32) -> ProbeResult {
+    let mut attempts = 0u8;
+    let mut last_err: Option<String> = None;
+
+    for delay_ms in [0u64, 50, 100] {
+        attempts += 1;
+        if delay_ms != 0 && !cfg!(test) {
+            thread::sleep(Duration::from_millis(delay_ms));
+        }
+
+        let opts = SerialOptions {
+            baud,
+            ..Default::default()
+        };
+
+        match SerialPort::connect(device, opts) {
+            Ok(_) => {
+                return ProbeResult {
+                    baud,
+                    attempts,
+                    success: true,
+                    message: "port opened successfully".to_string(),
+                }
+            }
+            Err(err) => last_err = Some(err.to_string()),
+        }
+    }
+
+    ProbeResult {
+        baud,
+        attempts,
+        success: false,
+        message: last_err.unwrap_or_else(|| "unknown error".to_string()),
+    }
 }
 
 #[derive(Clone)]
 struct ProbeResult {
     baud: u32,
+    attempts: u8,
     success: bool,
     message: String,
 }
@@ -289,17 +376,129 @@ impl WizardSummary {
         writeln!(file, "cols: {}", entry.answers.cols)?;
         writeln!(file, "rows: {}", entry.answers.rows)?;
         writeln!(file, "lcd_present: {}", entry.answers.lcd_present)?;
+        writeln!(file, "intent: {}", entry.answers.intent.as_str())?;
         writeln!(file, "preference: {}", entry.answers.preference.as_str())?;
+        writeln!(file, "run_probe: {}", entry.answers.run_probe)?;
+        writeln!(file, "show_helpers: {}", entry.answers.show_helpers)?;
         for probe in &entry.probes {
             let status = if probe.success { "ok" } else { "error" };
             writeln!(
                 file,
-                "probe baud {}: {} ({})",
-                probe.baud, status, probe.message
+                "probe baud {}: {} (attempts={} {})",
+                probe.baud, status, probe.attempts, probe.message
             )?;
         }
         writeln!(file)?;
         Ok(())
+    }
+}
+
+struct WizardTranscript {
+    path: PathBuf,
+}
+
+impl WizardTranscript {
+    fn new() -> Self {
+        let path = Path::new(CACHE_DIR).join("wizard.log");
+        Self { path }
+    }
+
+    fn record(&self, entry: WizardTranscriptEntry) {
+        if let Err(err) = self.try_record(&entry) {
+            eprintln!(
+                "lifelinetty wizard: failed to write transcript at {}: {err}",
+                self.path.display()
+            );
+        }
+    }
+
+    fn try_record(&self, entry: &WizardTranscriptEntry) -> io::Result<()> {
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)?;
+
+        writeln!(file, "=== lifelinetty wizard run ===")?;
+        writeln!(file, "timestamp: {}", format_rfc3339(entry.timestamp))?;
+        writeln!(file, "mode: {}", entry.mode_label)?;
+        if let Some(note) = entry.mode_note.as_deref() {
+            writeln!(file, "mode_note: {note}")?;
+        }
+        writeln!(file, "intent: {}", entry.answers.intent.as_str())?;
+        writeln!(file, "device: {}", entry.answers.device)?;
+        writeln!(file, "baud: {}", entry.answers.baud)?;
+        writeln!(file, "cols: {}", entry.answers.cols)?;
+        writeln!(file, "rows: {}", entry.answers.rows)?;
+        writeln!(file, "lcd_present: {}", entry.answers.lcd_present)?;
+        writeln!(file, "preference: {}", entry.answers.preference.as_str())?;
+        writeln!(file, "run_probe: {}", entry.answers.run_probe)?;
+        writeln!(file, "show_helpers: {}", entry.answers.show_helpers)?;
+
+        writeln!(file, "candidates:")?;
+        if entry.candidates.is_empty() {
+            writeln!(file, "  (none)")?;
+        } else {
+            for dev in &entry.candidates {
+                writeln!(file, "  - {dev}")?;
+            }
+        }
+
+        writeln!(file, "prompts:")?;
+        for line in &entry.prompt_transcript {
+            writeln!(file, "  {line}")?;
+        }
+
+        if entry.probes.is_empty() {
+            writeln!(file, "probes: (skipped)")?;
+        } else {
+            writeln!(file, "probes:")?;
+            for probe in &entry.probes {
+                let status = if probe.success { "ok" } else { "error" };
+                writeln!(
+                    file,
+                    "  - baud {}: {} (attempts={} {})",
+                    probe.baud, status, probe.attempts, probe.message
+                )?;
+            }
+        }
+
+        writeln!(file)?;
+        Ok(())
+    }
+}
+
+struct WizardTranscriptEntry {
+    timestamp: SystemTime,
+    mode_label: &'static str,
+    mode_note: Option<String>,
+    prompt_transcript: Vec<String>,
+    answers: WizardAnswers,
+    candidates: Vec<String>,
+    probes: Vec<ProbeResult>,
+}
+
+impl WizardTranscriptEntry {
+    fn new(
+        mode_label: &'static str,
+        mode_note: Option<String>,
+        prompt_transcript: Vec<String>,
+        answers: &WizardAnswers,
+        candidates: &[String],
+        probes: &[ProbeResult],
+    ) -> Self {
+        Self {
+            timestamp: SystemTime::now(),
+            mode_label,
+            mode_note,
+            prompt_transcript,
+            answers: answers.clone(),
+            candidates: candidates.to_vec(),
+            probes: probes.to_vec(),
+        }
     }
 }
 
@@ -389,11 +588,15 @@ impl PromptInput {
 
 struct WizardPrompter {
     input: PromptInput,
+    transcript: Vec<String>,
 }
 
 impl WizardPrompter {
     fn new(input: PromptInput) -> Self {
-        Self { input }
+        Self {
+            input,
+            transcript: Vec::new(),
+        }
     }
 
     fn mode_label(&self) -> &'static str {
@@ -404,8 +607,16 @@ impl WizardPrompter {
         self.input.note()
     }
 
+    fn is_interactive(&self) -> bool {
+        matches!(self.input, PromptInput::Interactive)
+    }
+
+    fn take_transcript(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.transcript)
+    }
+
     fn prompt(&mut self, question: &str, default: &str) -> Result<String> {
-        match &mut self.input {
+        let answer = match &mut self.input {
             PromptInput::Interactive => {
                 print!("{question}");
                 if !default.is_empty() {
@@ -417,26 +628,155 @@ impl WizardPrompter {
                 io::stdin().read_line(&mut buf)?;
                 let trimmed = buf.trim();
                 if trimmed.is_empty() {
-                    Ok(default.to_string())
+                    default.to_string()
                 } else {
-                    Ok(trimmed.to_string())
+                    trimmed.to_string()
                 }
             }
             PromptInput::Scripted { lines, cursor } => {
                 if *cursor >= lines.len() {
-                    return Ok(default.to_string());
-                }
-                let value = lines[*cursor].clone();
-                *cursor += 1;
-                if value.trim().is_empty() {
-                    Ok(default.to_string())
+                    default.to_string()
                 } else {
-                    Ok(value.trim().to_string())
+                    let value = lines[*cursor].clone();
+                    *cursor += 1;
+                    if value.trim().is_empty() {
+                        default.to_string()
+                    } else {
+                        value.trim().to_string()
+                    }
                 }
             }
-            PromptInput::AutoDefaults { .. } => Ok(default.to_string()),
+            PromptInput::AutoDefaults { .. } => default.to_string(),
+        };
+
+        self.transcript
+            .push(format!("Q: {question} [default={default}] A: {answer}"));
+
+        Ok(answer)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UsageIntent {
+    Server,
+    Client,
+    Standalone,
+}
+
+impl UsageIntent {
+    fn as_str(self) -> &'static str {
+        match self {
+            UsageIntent::Server => "server",
+            UsageIntent::Client => "client",
+            UsageIntent::Standalone => "standalone",
         }
     }
+
+    fn to_role_preference(self) -> RolePreference {
+        match self {
+            UsageIntent::Server => RolePreference::PreferServer,
+            UsageIntent::Client => RolePreference::PreferClient,
+            UsageIntent::Standalone => RolePreference::NoPreference,
+        }
+    }
+
+    fn from_role_preference(pref: RolePreference) -> Self {
+        match pref {
+            RolePreference::PreferServer => UsageIntent::Server,
+            RolePreference::PreferClient => UsageIntent::Client,
+            RolePreference::NoPreference => UsageIntent::Standalone,
+        }
+    }
+}
+
+fn prompt_yes_no(prompter: &mut WizardPrompter, question: &str, default: bool) -> Result<bool> {
+    let default_label = if default { "y" } else { "n" };
+    loop {
+        let response = prompter.prompt(question, default_label)?;
+        let trimmed = response.trim();
+        if trimmed.is_empty() {
+            return Ok(default);
+        }
+
+        match trimmed.to_ascii_lowercase().as_str() {
+            "y" | "yes" => return Ok(true),
+            "n" | "no" => return Ok(false),
+            other => eprintln!("'{other}' is not a yes or no answer. Try y/n."),
+        }
+    }
+}
+
+fn prompt_usage_intent(prompter: &mut WizardPrompter, default: UsageIntent) -> Result<UsageIntent> {
+    loop {
+        let response =
+            prompter.prompt("Usage intent (server/client/standalone)", default.as_str())?;
+        let trimmed = response.trim();
+        if trimmed.is_empty() {
+            return Ok(default);
+        }
+
+        match trimmed.to_ascii_lowercase().as_str() {
+            "server" => return Ok(UsageIntent::Server),
+            "client" => return Ok(UsageIntent::Client),
+            "standalone" | "solo" | "auto" => return Ok(UsageIntent::Standalone),
+            other => eprintln!("Unknown intent '{other}', choose server, client, or standalone."),
+        }
+    }
+}
+
+fn print_wizard_helper_snippets() {
+    println!("\n=== Wizard helper snippets (copy/paste) ===");
+    println!("Nothing runs automatically. These are optional snippets you can paste yourself.");
+    println!();
+    println!("Pull wizard/cache logs back to your laptop:");
+    println!("  scp -r pi@raspberrypi.local:/run/serial_lcd_cache ./pi-logs/");
+    println!();
+    println!("Tail wizard + serial backoff logs on the Pi (tmux keeps it alive):");
+    println!("  ssh -t pi@raspberrypi.local \\");
+    println!("    'tmux new -A -s lifelinetty \"cd /run/serial_lcd_cache && tail -F wizard.log wizard/summary.log serial_backoff.log\"'");
+    println!();
+    println!("If you updated config and want to restart the systemd unit:");
+    println!("  ssh -t pi@raspberrypi.local 'sudo systemctl restart lifelinetty && sudo journalctl -u lifelinetty -f'");
+}
+
+fn enumerate_serial_devices_ranked() -> Vec<String> {
+    let mut devices = Vec::new();
+    if let Ok(entries) = fs::read_dir("/dev") {
+        for entry in entries.flatten() {
+            if let Some(name) = entry.file_name().to_str() {
+                if name.starts_with("ttyUSB")
+                    || name.starts_with("ttyACM")
+                    || name.starts_with("ttyAMA")
+                    || name.starts_with("ttyS")
+                {
+                    devices.push(format!("/dev/{name}"));
+                }
+            }
+        }
+    }
+
+    devices.sort_by(|a, b| {
+        let (wa, ka) = device_rank_key(a);
+        let (wb, kb) = device_rank_key(b);
+        wa.cmp(&wb).then_with(|| ka.cmp(kb))
+    });
+    devices
+}
+
+fn device_rank_key(path: &str) -> (u8, &str) {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    let weight = if name.starts_with("ttyUSB") {
+        0
+    } else if name.starts_with("ttyACM") {
+        1
+    } else if name.starts_with("ttyAMA") {
+        2
+    } else if name.starts_with("ttyS") {
+        3
+    } else {
+        4
+    };
+    (weight, name)
 }
 
 fn prompt_device(
@@ -465,14 +805,7 @@ fn prompt_device(
 }
 
 fn prompt_lcd_presence(prompter: &mut WizardPrompter) -> Result<bool> {
-    loop {
-        let response = prompter.prompt("Is an LCD connected (y/n)", "y")?;
-        match response.trim().to_ascii_lowercase().as_str() {
-            "" | "y" | "yes" => return Ok(true),
-            "n" | "no" => return Ok(false),
-            other => eprintln!("'{other}' is not a yes or no answer. Try y/n."),
-        }
-    }
+    prompt_yes_no(prompter, "Is an LCD connected (y/n)", true)
 }
 
 fn prompt_baud(prompter: &mut WizardPrompter, default: u32) -> Result<u32> {
@@ -524,25 +857,6 @@ fn prompt_role(prompter: &mut WizardPrompter, default: RolePreference) -> Result
     }
 }
 
-fn enumerate_serial_devices() -> Vec<String> {
-    let mut devices = Vec::new();
-    if let Ok(entries) = fs::read_dir("/dev") {
-        for entry in entries.flatten() {
-            if let Some(name) = entry.file_name().to_str() {
-                if name.starts_with("ttyUSB")
-                    || name.starts_with("ttyACM")
-                    || name.starts_with("ttyAMA")
-                    || name.starts_with("ttyS")
-                {
-                    devices.push(format!("/dev/{name}"));
-                }
-            }
-        }
-    }
-    devices.sort();
-    devices
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -560,8 +874,18 @@ mod tests {
         let dir = tempdir().unwrap();
         let config_path = dir.path().join("config.toml");
         let defaults = Config::default();
-        let mut wizard = FirstRunWizard::new(config_path.clone(), defaults).unwrap();
-        let answers = ["y", "/dev/ttyS42", "19200", "16", "2", "client"];
+        let mut wizard = FirstRunWizard::new(config_path.clone(), defaults, false).unwrap();
+        let answers = [
+            "standalone",
+            "y",
+            "/dev/ttyS42",
+            "19200",
+            "n",
+            "16",
+            "2",
+            "client",
+            "n",
+        ];
         wizard
             .run(scripted_input(&answers))
             .expect("wizard run failed");

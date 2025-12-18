@@ -36,13 +36,10 @@ pub enum Icon {
 
 impl Icon {
     fn normalize(name: &str) -> String {
-        name.trim()
-            .to_ascii_lowercase()
-            .replace('-', "_")
-            .replace(' ', "_")
+        name.trim().to_ascii_lowercase().replace(['-', ' '], "_")
     }
 
-    pub fn from_str(name: &str) -> Option<Self> {
+    pub fn from_name(name: &str) -> Option<Self> {
         match Self::normalize(name).as_str() {
             "battery" => Some(Icon::Battery),
             "heart" | "heartbeat" => Some(Icon::Heart),
@@ -115,7 +112,7 @@ impl DisplayMode {
 pub(crate) fn parse_icons(raw: Option<Vec<String>>) -> Vec<Icon> {
     raw.unwrap_or_default()
         .into_iter()
-        .filter_map(|name| Icon::from_str(&name))
+        .filter_map(|name| Icon::from_name(&name))
         .collect()
 }
 
@@ -140,11 +137,11 @@ mod tests {
     }
 
     #[test]
-    fn icon_from_str_handles_variants() {
-        assert_eq!(Icon::from_str("WiFi"), Some(Icon::Wifi));
-        assert_eq!(Icon::from_str("open-heart"), Some(Icon::OpenHeart));
-        assert_eq!(Icon::from_str("Up_Arrow"), Some(Icon::UpArrow));
-        assert_eq!(Icon::from_str("degree_f"), Some(Icon::DegreeF));
+    fn icon_from_name_handles_variants() {
+        assert_eq!(Icon::from_name("WiFi"), Some(Icon::Wifi));
+        assert_eq!(Icon::from_name("open-heart"), Some(Icon::OpenHeart));
+        assert_eq!(Icon::from_name("Up_Arrow"), Some(Icon::UpArrow));
+        assert_eq!(Icon::from_name("degree_f"), Some(Icon::DegreeF));
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 Updated 4 Dec 2025
 
-LifelineTTY remains a single Rust daemon that ingests newline-delimited JSON via UART and drives an HD44780 LCD (PCF8574 @ 0x27). All work must obey the charter in `.github/copilot-instructions.md`: single binary, no sockets, no new transports, RAM-disk cache only (`/run/serial_lcd_cache`), persistent config at `~/.serial_lcd/config.toml`, stable CLI flags (`--run`, `--test-lcd`, `--test-serial`, `--device`, `--baud`, `--cols`, `--rows`, `--demo`, `--serialsh`, `--wizard`, `--config-file`).
+LifelineTTY remains a single Rust daemon that ingests newline-delimited JSON via UART and drives an HD44780 LCD (PCF8574 @ 0x27). All work must obey the charter in `.github/copilot-instructions.md`: single binary, no sockets, no new transports, RAM-disk cache only (`/run/serial_lcd_cache`), persistent config at `~/.serial_lcd/config.toml`, and a **stable CLI defined by** `lifelinetty --help` (implemented in `src/cli.rs`).
 
 ## How to read this roadmap
 
@@ -29,6 +29,7 @@ Every PR that changes runtime behavior should include:
 3. Docs parity: update README and any referenced docs/playbooks when behavior changes.
 4. Local commands (minimum): `cargo fmt`, `cargo clippy -- -D warnings`, `cargo test`.
 5. Platform note: explicitly state x86_64 + ARMv6 status (ran both, or why ARMv6 was skipped).
+6. Perf sanity (when touching buffering/render/polling/backoff): run at least one matrix scenario for a 2h soak and note RSS <5 MB (record platform and command used).
 
 ## Context & guardrails
 
@@ -41,7 +42,15 @@ Every PR that changes runtime behavior should include:
 ### AI execution cues (read first)
 
 - **Storage**: RAM-disk only at `/run/serial_lcd_cache`; only `~/.serial_lcd/config.toml` persists. Never write elsewhere; clean up cache artifacts.
-- **CLI surface (stable)**: `--run`, `--test-lcd`, `--test-serial`, `--device`, `--baud`, `--cols`, `--rows`, `--demo`, `--serialsh`, `--wizard`, `--config-file`. The `--config-file <path>` override is the highest-priority config source; no additional flags are allowed without explicit approval.
+- **CLI surface (stable)**: treat `lifelinetty --help` as canonical (see `src/cli.rs`). The binary supports:
+  - Commands: `lifelinetty run ...` (or omit `run` and pass flags directly), plus `--help` / `--version`.
+  - Core serial/LCD overrides: `--device`, `--baud`, `--flow-control`, `--parity`, `--stop-bits`, `--dtr-on-open`, `--serial-timeout-ms`, `--cols`, `--rows`, `--pcf8574-addr`.
+  - Logging + cache policy: `--log-level`, `--log-file` (must be under `/run/serial_lcd_cache`; also honors `LIFELINETTY_LOG_PATH`).
+  - Config precedence: `--config-file <path>` loads a specific TOML instead of `~/.serial_lcd/config.toml` (env overrides still apply on top).
+  - Modes / toggles: `--demo`, `--serialsh`, `--wizard`, `--payload-file`, `--backoff-initial-ms`, `--backoff-max-ms`, polling flags (`--polling/--no-polling`, `--poll-interval-ms`), and compression flags (`--compressed/--no-compressed`, `--codec`).
+
+  Constraints enforced by CLI parsing today:
+  - `--serialsh` cannot be combined with `--demo` or `--payload-file`.
 - **Protocols/transports**: UART newline JSON or `key=value`; HD44780 + PCF8574 @ 0x27 only; no sockets/BLE/HTTP/PTYs.
 - **Allowed crates**: std + charter whitelist (hd44780-driver, linux-embedded-hal, rppal, serialport, tokio-serial async, tokio for async serial, serde/serde_json, crc32fast, ctrlc, anyhow/thiserror, log/tracing, calloop, async-io, syslog-rs, os_info, crossbeam, rustix, sysinfo, futures, directories, humantime, serde_bytes, bincode, clap_complete, indicatif, tokio-util). New crates must be added to `docs/lifelinetty_creates.md` and stay within the whitelist.
 - **Quality bar**: `cargo fmt`, `cargo clippy -- -D warnings`, `cargo test` on x86_64 + ARMv6; no `unsafe`, no unchecked `unwrap()` in production paths; keep RSS <5 MB and avoid busy loops.
@@ -53,7 +62,7 @@ Every PR that changes runtime behavior should include:
 | **B1 — Rename fallout** | ✅ closed (2 Dec 2025) | Release | Re-scan `Makefile`, `packaging/`, `docker/`, `scripts/` for `seriallcd` strings before each release cut. | `ripgrep seriallcd` returns none; package names/units stay `lifelinetty`. |
 | **B2 — Charter sync** | ✅ closed | Eng | `.github/copilot-instructions.md` matches UART/LCD/cache rules; roadmap restates the same. | Doc diff vs charter shows no drift; CLI defaults remain `/dev/ttyUSB0@9600` 8N1. |
 | **B3 — Cache policy audit** | ✅ closed | Eng | Ensure logs/temp stay under `/run/serial_lcd_cache`; only `~/.serial_lcd/config.toml` persists. | `tests/bin_smoke.rs` + integration mock enforce paths; no CI leaks outside cache/config. |
-| **B4 — CLI docs/tests parity** | ✅ closed | Eng | Keep README/help tables aligned; smoke tests cover `--run --test-lcd --test-serial --device --baud --cols --rows --demo --serialsh --wizard`. | `cargo test -p lifelinetty` smoke passes; README/help text match. |
+| **B4 — CLI docs/tests parity** | ✅ closed | Eng | Keep README/help tables aligned with `lifelinetty --help` (`src/cli.rs`); smoke tests cover help content and key precedence (e.g., `--config-file` behavior, env overrides) without requiring hardware. | `cargo test -p lifelinetty` smoke passes; smoke asserts core flags appear in help; README/roadmap/help text match. |
 | **B5 — AI prompt refresh** | ✅ closed | Eng | Prompts/instructions describe mission, guardrails, cache policy. | `.github/copilot-instructions.md` and roadmap match charter text. |
 | **B6 — Release tooling sanity** | ✅ closed | Release | Packaging/Docker scripts emit only `lifelinetty_*`; no legacy symlinks. | `scripts/local-release.sh` outputs lifelinetty artifacts only; systemd units named `lifelinetty.service`. |
 
@@ -76,16 +85,18 @@ Focus: **Debug existing features, expand tests, and run real-world user trials**
 | --- | --- | --- | --- | --- |
 | **P1 — Config hardening (regression sweep)** | 🟢 Done | Config | Config loader now backfills all defaults into `~/.serial_lcd/config.toml` (even when partial/empty) for user visibility; env overrides supported for device/baud/cols/rows; fixtures plus integration tests cover malformed + partial TOML and env precedence; smoke covers CLI cols/rows/baud precedence. | Persist only to `~/.serial_lcd/config.toml`; no new keys unless already documented. Acceptance: fixtures added, integration mock asserts env overrides, smoke covers cols/rows/baud precedence. |
 | **P2 — LCD driver regressions** | 🔵 Open | Display | Expand coverage for flicker-free writes, CGRAM/icon churn, backlight/blink toggles, and demo overlays; add host-mode/stub tests where hardware isn’t available; update `docs/lcd_patterns.md` with a 16×2 visual expectation table for the demo playlist and common overlays. | No new driver APIs; keep HD44780 + PCF8574 only. Acceptance: (1) icon churn tests prove ≤8 slots and deterministic eviction behavior, (2) backlight/blink toggles are covered by tests, (3) docs updated for 16×2 expected visuals. |
-| **P3 — Serial backoff telemetry** | 🔵 Open | Serial | Verify structured error mapping (permission/unplug/framing) and reconnect counters; assert log placement and rotation limits for serial backoff logs under `/run/serial_lcd_cache/serial_backoff*`. | No new transports; respect 9600 baud floor and backoff timing. Acceptance: (1) tests assert log path is under cache, (2) reconnect counters increase deterministically in fake/unplug scenarios, (3) backoff timing is covered by unit tests with bounded time budgets. |
-| **P4 — Polling/heartbeat stability** | 🔵 Open | Core | Harden polling/watchdog interactions and startup/shutdown ordering so the LCD render loop stays responsive during reconnects; add time-budgeted tests that exercise reconnect + polling overlap without flakes. | Keep RSS <5 MB; timers respect existing config fields. Acceptance: (1) watchdog/polling tests prove render loop keeps updating during reconnect/backoff, (2) timing budgets enforced (no tests that hang), (3) any new logs remain under cache and are asserted when practical. |
-| **Bug backlog & field fixes** | 🔵 Open | Rotation | Triaged defects from real hardware runs get repro tests and fixes in the same PR; no feature creep. | Must ship with regression tests and doc updates as needed; log paths remain in cache. |
+| **P3 — Serial backoff telemetry** | 🔵 Open | Serial | Verify structured error mapping (permission/unplug/framing) and reconnect counters; assert log placement and rotation limits for serial backoff logs under `/run/serial_lcd_cache/serial_backoff*`. | No new transports; respect 9600 baud floor and backoff timing. Acceptance: (1) tests assert log path is under cache, (2) reconnect counters increase deterministically in fake/unplug scenarios, (3) backoff timing stays within initial ≤500 ms and cap ≤10_000 ms with monotonic non-decreasing steps, (4) rotation limits enforced (e.g., ≤5 files, ≤256 KB each) and covered by tests. |
+| **P4 — Polling/heartbeat stability** | 🔵 Open | Core | Harden polling/watchdog interactions and startup/shutdown ordering so the LCD render loop stays responsive during reconnects; add time-budgeted tests that exercise reconnect + polling overlap without flakes. | Keep RSS <5 MB; timers respect existing config fields. Acceptance: (1) watchdog/polling tests prove render loop keeps updating during reconnect/backoff using a measurable liveliness check (e.g., ≥3 renders within any 2s window during overlap), (2) timing budgets enforced (no tests that hang), (3) any new logs remain under cache and are asserted when practical. |
+| **Bug backlog & field fixes** | 🔵 Open | Rotation | Triaged defects from real hardware runs get repro tests and fixes in the same PR; no feature creep. | Must ship with regression tests and doc updates as needed; log paths remain in cache; include a log bundle under `/run/serial_lcd_cache/bug-<id>/` and reference the repro test. |
 
 > Execution note for AI/agents: keep changes minimal, land tests alongside fixes, and prefer touching only the files listed under each priority/workstream.
 
 ### Parity notes (stay aligned)
 
 - **Dependency parity**: Reconcile `Cargo.toml` with the allowed crate list. If `lz4_flex`, `zstd`, or `embedded-hal` features are present, either gate them per charter or document justification in `docs/lifelinetty_creates.md` in the same PR.
-- **CLI parity**: `--serialsh` and `--wizard` are **stable**; no new flags in v0.2.0. Keep README/help tables and `tests/bin_smoke.rs` in lockstep.
+- **CLI parity**: `--serialsh` and `--wizard` are **stable**; do not add new commands/modes in v0.2.0. Keep README/help tables, roadmap, and `tests/bin_smoke.rs` in lockstep with `src/cli.rs`.
+
+  Note: the stable entrypoint is the `run` subcommand (or implicit `run` when you pass flags directly); avoid documenting flags/modes that are not present in `src/cli.rs`.
 
 ### Explicitly out of scope for v0.2.0
 
@@ -105,22 +116,22 @@ Focus: **Debug existing features, expand tests, and run real-world user trials**
 
 - **LCD regression coverage**
   - Files: `src/display/{lcd,overlays,icon_bank}.rs`, `src/lcd_driver/{mod,pcf8574}.rs`, `tests/bin_smoke.rs`, `tests/integration_mock.rs`, `docs/lcd_patterns.md`.
-  - Actions: add host-mode/stub tests for CGRAM swaps and backlight/blink paths; document demo patterns and expected visuals; ensure icon churn respects 8-slot limit with deterministic fallbacks.
+  - Actions: add host-mode/stub tests for CGRAM swaps and backlight/blink paths; document demo patterns and expected visuals; ensure icon churn respects the 8-slot CGRAM limit with deterministic eviction and deterministic missing-icon handling (no silent ASCII substitution).
   - Evidence to capture (per change):
     - A 16×2 expected-output table or screenshot notes in `docs/lcd_patterns.md` (frame-by-frame where useful).
     - A deterministic host-mode test that proves behavior without real I²C hardware.
 
   ### P2a — Remove LCD icon & display-type fallbacks (alpha)
 
-  Status: 🔴 Active (alpha removal) | Owner: Display
+  Status: 🟢 Done (alpha removal) | Owner: Display
 
-  Summary: Because we are in alpha, the project will remove implicit ASCII fallbacks and silent stub display fallbacks in this release. The goal is to make missing glyphs and hardware init failures explicit, simpler to test, and easier for operators to diagnose.
+  Summary: Implicit ASCII glyph fallbacks and silent stub display fallbacks have been removed. Missing glyphs are now surfaced explicitly and Linux hardware init failures bubble up instead of silently swapping to a stub.
 
   What “done” means:
-  - Remove `Icon::ascii_fallback()` usages and stop automatically substituting ASCII glyphs in render paths.
-  - Remove deterministic fallback characters embedded in `IconPalette` getters; the palette will return optional glyphs and the render should handle absence (empty/blank cells) explicitly.
-  - On Linux, `Lcd::new()` will return an error on hardware init failure instead of falling back silently to a stub; callers and tools must handle this explicitly.
-  - Update docs, demos, and tests to reflect the new deterministic behavior.
+  - `Icon::ascii_fallback()` and implicit ASCII substitutions are gone from render paths.
+  - `IconPalette` returns optional glyphs only; renderers leave blanks and record `missing_icons` instead of substituting characters.
+  - On Linux, `Lcd::new()` returns an error on hardware init failure instead of falling back silently to a stub; host-mode tests use the explicit stub constructor.
+  - Docs and tests updated to reflect deterministic behavior (including overlay coverage that asserts no ASCII substitution when glyphs are absent).
 
   Files to change / review:
   - `src/display/icon_bank.rs`
@@ -130,7 +141,7 @@ Focus: **Debug existing features, expand tests, and run real-world user trials**
   - Documentation: `README.md`, `docs/lcd_patterns.md`, `docs/demo_playbook.md`, `samples/*.json`
 
   Acceptance criteria:
-  - Unit and integration tests updated so missing icons are recorded and not silently substituted.
+  - Unit coverage asserts missing icons are recorded without ASCII substitution (e.g., `overlay_icons_does_not_substitute_when_missing`).
   - Tests and smoke checks updated for demo payloads; behavior is deterministic and obvious when glyphs are missing or when hardware fails to initialise.
   - Documentation explains the current alpha removal and how operators should handle missing glyphs / hardware errors.
 
@@ -141,14 +152,16 @@ Focus: **Debug existing features, expand tests, and run real-world user trials**
   - Evidence to capture (per run):
     - Scenario directory under `/run/serial_lcd_cache/<scenario>-YYYYMMDD/` with logs and the exact command lines used.
     - A short note in the PR describing whether the run was on x86_64 (Docker) or ARMv6 (Pi 1), plus any observed deviations.
+    - RSS observation for at least one 2h soak when the PR touches buffering/render/polling (target <5 MB).
 
 - **Dependency alignment**
   - Files: `Cargo.toml`, `docs/lifelinetty_creates.md`.
-  - Actions: reconcile listed crates (e.g., `lz4_flex`, `zstd`, `embedded-hal`) with the charter-approved set; either justify/append to the allowed list or gate/prune unused features, updating docs in the same PR.
+  - Actions: reconcile listed crates (e.g., `lz4_flex`, `zstd`, `embedded-hal`) with the charter-approved set; either justify/append to the allowed list or gate/prune unused features, updating `docs/lifelinetty_creates.md` in the same PR.
 
 - **CLI flag parity & status check**
   - Files: `README.md`, `src/cli.rs`, `tests/bin_smoke.rs`.
   - Actions: reconcile `--serialsh`/`--wizard` status (stable vs milestone-gated), ensure `--help`/README flag tables match charter, and add/refresh smoke assertions for allowed flags.
+  - Evidence to capture: smoke test names covering help output, `--config-file` precedence, env override precedence, and flag presence.
 
 
 ## Real-world test matrix
@@ -165,8 +178,8 @@ Record outcomes and defects in RAM-disk logs; reproduce with tests before closin
 
 **Execution notes:**
 
-- Logs/artifacts live under `/run/serial_lcd_cache/{serial_backoff,watchdog,tunnel,wizard,polling}`; never persist elsewhere.
-- Owner: field-ops rotation. Exit when each scenario has a dated log bundle in cache plus a matching regression test (or a filed defect).
+- Logs/artifacts live under `/run/serial_lcd_cache/{serial_backoff,watchdog,tunnel,wizard,polling,negotiation}`; never persist elsewhere. New log families must be added to this list and asserted in tests. Rotation limits for serial_backoff logs apply (see P3).
+- Owner: field-ops rotation. Exit when each scenario has a dated log bundle in cache plus a matching regression test (or a filed defect). Note which matrix scenario was run and where its artifacts live (e.g., `/run/serial_lcd_cache/<scenario>-YYYYMMDD`).
 
 ## Testing & validation (per change)
 

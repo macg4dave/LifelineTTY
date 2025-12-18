@@ -170,7 +170,7 @@ impl Lcd {
                 Err(err) => {
                     // For alpha: do not silently fall back to a stub on Linux — fail fast so
                     // calling code and operators can detect hardware/init issues clearly.
-                    return Err(err);
+                    Err(err)
                 }
             }
         }
@@ -455,10 +455,9 @@ impl DriverBackend {
                 );
                 match Self::new_with_i2cdev(cols, rows, pcf_addr, preference) {
                     Ok(tuple) => Ok(tuple),
-                    Err(fallback_err) => Err(Error::Io(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("lcd init failed: {primary_err}; fallback: {fallback_err}"),
-                    ))),
+                    Err(fallback_err) => Err(Error::Io(std::io::Error::other(format!(
+                        "lcd init failed: {primary_err}; fallback: {fallback_err}"
+                    )))),
                 }
             }
         }
